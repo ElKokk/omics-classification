@@ -1,0 +1,12 @@
+
+data/raw/
+*.rds
+*.pkl
+*.csv.gz
+
+# cache / IDE noise
+.Rhistory
+.Rproj.user/
+.ipynb_checkpoints/
+__pycache__/
+.env

@@ -1,0 +1,23 @@
+name: omics-thesis
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # languages
+  - python=3.12.6
+  - r-base=4.4.2
+  # core Py ML stack
+  - numpy
+  - pandas
+  - scikit-learn
+  - mlens
+  # core R bio / ML stack
+  - r-tidyverse
+  - r-caret
+  - r-superlearner
+  - r-randomforest
+  - r-e1071
+  # misc
+  - pip
+  - pip:
+      - snakemake

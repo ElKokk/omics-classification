@@ -1,11 +1,68 @@
+###############################################################################
+# Config
+###############################################################################
+import os
+ENV = os.path.join(os.getcwd(), "env", "environment.yml")
+
+
 configfile: "workflow/config.yaml"
+
+DATASETS   = config["datasets"]        # e.g. ["prostmat", "gene2", "microbiome"]
+SIG_SIZES  = config["sig_sizes"]       # e.g. [3,5,10,20,50,100]
+FIXED_K    = config["fixed_k"]         # e.g. {"prostmat":20, "gene2":20,"microbiome":30}
+
+###############################################################################
+# Final target
+###############################################################################
 
 rule all:
     input:
-        "results/dummy.txt"
+        expand("results/{ds}/stage2/metrics.tsv", ds=DATASETS)
 
-rule dummy:
+###############################################################################
+# Stage 0 – placeholder raw‑data to processed‑matrix
+###############################################################################
+
+rule copy_matrix:
+    input:
+        "data/raw/{ds}.csv"
     output:
-        "results/dummy.txt"
+        "data/processed/{ds}_matrix.csv"
+    conda:
+        ENV
     shell:
-        "echo 'Pipeline skeleton OK' > {output}"
+        # no preprocessing, just ensure file exists
+        "cp {input} {output}"
+
+###############################################################################
+# Stage 1 – Monte‑Carlo CV for variable‑k feature selection
+###############################################################################
+
+rule mccv_stage1:
+    input:
+        matrix="data/processed/{ds}_matrix.csv"
+    output:
+        metrics="results/{ds}/stage1/metrics_k{K}.tsv",
+        freq   ="results/{ds}/stage1/freq_k{K}.csv"
+    params:
+        k="{K}"
+    script:                        # or use "script:" if you prefer
+        "../scripts/python/mccv_stage1.py"
+
+###############################################################################
+# Stage 2 – fixed‑signature evaluation (incl. Super Learner)
+###############################################################################
+
+
+rule stage2_fixed_signature:
+    input:
+        matrix   = "data/processed/{ds}_matrix.csv",
+        gene_set = lambda w: f"results/{w.ds}/stage1/freq_k{config['fixed_k'][w.ds]}.csv"
+    output:
+        "results/{ds}/stage2/metrics.tsv"
+    params:
+        fixed    = lambda w: config["fixed_k"][w.ds]
+    script:
+        "../scripts/python/stage2_eval.py"
+
+
