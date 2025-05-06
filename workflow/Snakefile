@@ -7,9 +7,9 @@ ENV = os.path.join(os.getcwd(), "env", "environment.yml")
 
 configfile: "workflow/config.yaml"
 
-DATASETS   = config["datasets"]        # e.g. ["prostmat", "gene2", "microbiome"]
-SIG_SIZES  = config["sig_sizes"]       # e.g. [3,5,10,20,50,100]
-FIXED_K    = config["fixed_k"]         # e.g. {"prostmat":20, "gene2":20,"microbiome":30}
+DATASETS   = config["datasets"]
+SIG_SIZES  = config["sig_sizes"]
+FIXED_K    = config["fixed_k"]
 
 ###############################################################################
 # Final target
@@ -20,7 +20,7 @@ rule all:
         expand("results/{ds}/stage2/metrics.tsv", ds=DATASETS)
 
 ###############################################################################
-# Stage 0 – placeholder raw‑data to processed‑matrix
+# Stage 0 – I will check that later if needed
 ###############################################################################
 
 rule copy_matrix:
@@ -31,7 +31,6 @@ rule copy_matrix:
     conda:
         ENV
     shell:
-        # no preprocessing, just ensure file exists
         "cp {input} {output}"
 
 ###############################################################################
@@ -46,11 +45,11 @@ rule mccv_stage1:
         freq   ="results/{ds}/stage1/freq_k{K}.csv"
     params:
         k="{K}"
-    script:                        # or use "script:" if you prefer
+    script:
         "../scripts/python/mccv_stage1.py"
 
 ###############################################################################
-# Stage 2 – fixed‑signature evaluation (incl. Super Learner)
+# Stage 2 – fixed‑signature
 ###############################################################################
 
 
