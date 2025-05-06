@@ -2,7 +2,7 @@
 Stage‑1 Monte‑Carlo CV for prostmat
 ──────────────────────────────────
 * 100 stratified 2/3‑1/3 splits
-* limma ranking on train fold (top‑K genes, K from Snakemake)
+* limma ranking on train fold
 * Linear Discriminant Analysis
 * Outputs
     ├─ results/{ds}/stage1/metrics_k{K}.tsv
@@ -34,17 +34,17 @@ logging.info("Stage‑1  |  dataset=prostmat  |  K=%d", K)
 
 # ----------------- loader -----------------------------------------------------
 def load_expression(fp: str | Path) -> pd.DataFrame:
-    """prostmat.csv: first row = sample IDs, blank col‑0."""
+
     df = pd.read_csv(fp, header=None).drop(columns=[0])
-    df.columns = df.iloc[0, :].tolist()        # 101 samples
+    df.columns = df.iloc[0, :].tolist()
     mat = df.iloc[1:, :].astype(float)
-    mat.index = [str(i) for i in range(mat.shape[0])]  # 6033 genes
+    mat.index = [str(i) for i in range(mat.shape[0])]
     return mat
 
 expr = load_expression(mat_path)
 
 def norm_id(s: str) -> str:
-    """Keep limma IDs comparable to row names."""
+
     return re.sub(r"\.0$", "", str(s).lstrip("X"))
 
 expr.index = expr.index.map(norm_id)
@@ -54,7 +54,7 @@ samples = expr.columns
 classes = np.array(["Cancer" if "cancer" in s.lower() else "Control"
                     for s in samples])
 
-# ----------------- limma (once) ----------------------------------------------
+# ----------------- limma ----------------------------------------------
 limma = packages.importr("limma", suppress_messages=True)
 
 # ----------------- helpers ----------------------------------------------------
@@ -78,7 +78,6 @@ for i, (tr, te) in enumerate(sss.split(samples, classes), 1):
     design = ",".join(["1" if classes[j] == "Cancer" else "0" for j in tr])
     r(f"design <- model.matrix(~ factor(c({design})))")
 
-    # suppressMessages avoids “Removing intercept…” noise
     r("""
         suppressMessages({
             fit <- eBayes(lmFit(mat_py, design))
@@ -104,7 +103,7 @@ for i, (tr, te) in enumerate(sss.split(samples, classes), 1):
     logging.info("split %3d | MCE=%.3f  Sens=%.3f  Spec=%.3f",
                  i, mce, sens, spec)
 
-# ----------------- write outputs ---------------------------------------------
+
 Path(metrics_tsv).parent.mkdir(parents=True, exist_ok=True)
 pd.DataFrame(metric_rows).to_csv(metrics_tsv, sep="\t", index=False)
 
