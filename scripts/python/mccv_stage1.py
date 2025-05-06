@@ -5,7 +5,7 @@ Stage‑1 Monte‑Carlo CV for prostmat
 * limma ranking on train fold (top‑K genes, K from Snakemake)
 * Linear Discriminant Analysis
 * Outputs
-    ├─ results/{ds}/stage1/metrics_k{K}.tsv   (100 rows)
+    ├─ results/{ds}/stage1/metrics_k{K}.tsv
     └─ results/{ds}/stage1/freq_k{K}.csv      (gene, count)
 """
 

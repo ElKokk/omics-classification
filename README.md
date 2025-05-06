@@ -28,7 +28,7 @@ conda activate omics-thesis
 
 RUN THE FULL PIPELINE
 
-snakemake --use-conda -j1
+snakemake --use-conda -j4
 
 
 (OR RUN JUST STAGE1)

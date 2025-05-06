@@ -1,5 +1,5 @@
 """
-Stage‑2 fixed‑signature evaluation (LDA only, for now).
+Stage‑2 fixed‑signature evaluation.
 """
 
 import pandas as pd, numpy as np
@@ -13,7 +13,7 @@ panel_fp    = snakemake.input["gene_set"]
 out_metrics = snakemake.output[0]
 K_FIXED     = int(snakemake.params["fixed"])
 
-# --------- load matrix (same rule as Stage‑1) -------------------------------
+# --------- load -------------------------------
 expr = pd.read_csv(matrix_fp, header=None).drop(columns=[0])
 expr.columns = expr.iloc[0, :].tolist()
 expr = expr.iloc[1:, :].astype(float)
