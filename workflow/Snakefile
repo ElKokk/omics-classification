@@ -34,7 +34,7 @@ rule copy_matrix:
         "cp {input} {output}"
 
 ###############################################################################
-# Stage 1 – Monte‑Carlo CV for variable‑k feature selection
+#Stage 1 – Monte‑Carlo CV for variable‑k feature selection
 ###############################################################################
 
 rule mccv_stage1:
