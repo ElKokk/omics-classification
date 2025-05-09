@@ -1,12 +1,11 @@
 ###############################################################################
-# Config
+#  S n a k e m a k e  w o r k f l o w
 ###############################################################################
 import os
-ENV = os.path.join(os.getcwd(), "env", "environment.yml")
+ENV_YAML = os.path.join(os.getcwd(), "env", "environment.yml")   # ← one name
 
-
+# ------------------------------------------------------------------ #
 configfile: "workflow/config.yaml"
-
 DATASETS   = config["datasets"]
 SIG_SIZES  = config["sig_sizes"]
 FIXED_K    = config["fixed_k"]
@@ -14,54 +13,62 @@ FIXED_K    = config["fixed_k"]
 ###############################################################################
 # Final target
 ###############################################################################
-
 rule all:
     input:
-        expand("results/{ds}/stage2/metrics.tsv", ds=DATASETS)
+        expand("results/{ds}/stage2/metrics.tsv", ds=DATASETS),
+        expand("figures/{ds}/stage1_k{K}/per_split.png", ds=DATASETS, K=SIG_SIZES),
+        expand("figures/{ds}/stage1_k{K}/gene_frequency.png",ds=DATASETS,K=SIG_SIZES),
+        expand("figures/{ds}/stage1_k{K}/mean_se.png",ds=DATASETS,K=SIG_SIZES)
+        # expand("results/{ds}/stage1/metrics_k{K}.tsv", ds=DATASETS, K=SIG_SIZES),
 
 ###############################################################################
-# Stage 0 – I will check that later if needed
+# Stage 0 – (placeholder copy)
 ###############################################################################
-
 rule copy_matrix:
-    input:
-        "data/raw/{ds}.csv"
-    output:
-        "data/processed/{ds}_matrix.csv"
-    conda:
-        ENV
-    shell:
-        "cp {input} {output}"
+    input:  "data/raw/{ds}.csv"
+    output: "data/processed/{ds}_matrix.csv"
+    conda:  ENV_YAML
+    shell:  "cp {input} {output}"
 
 ###############################################################################
-#Stage 1 – Monte‑Carlo CV for variable‑k feature selection
+# Stage 1 – variable‑K Monte‑Carlo CV
 ###############################################################################
-
 rule mccv_stage1:
     input:
-        matrix="data/processed/{ds}_matrix.csv"
+        matrix = "data/processed/{ds}_matrix.csv"
     output:
-        metrics="results/{ds}/stage1/metrics_k{K}.tsv",
-        freq   ="results/{ds}/stage1/freq_k{K}.csv"
-    params:
-        k="{K}"
-    script:
-        "../scripts/python/mccv_stage1.py"
+        metrics = "results/{ds}/stage1/metrics_k{K}.tsv",
+        freq    = "results/{ds}/stage1/freq_k{K}.csv"
+    params: k = "{K}"
+    conda:  ENV_YAML
+    script: "../scripts/python/mccv_stage1.py"
 
 ###############################################################################
-# Stage 2 – fixed‑signature
+# Stage 2 – fixed‑signature evaluation
 ###############################################################################
-
-
 rule stage2_fixed_signature:
     input:
         matrix   = "data/processed/{ds}_matrix.csv",
-        gene_set = lambda w: f"results/{w.ds}/stage1/freq_k{config['fixed_k'][w.ds]}.csv"
+        gene_set = lambda wc: f"results/{wc.ds}/stage1/freq_k{FIXED_K[wc.ds]}.csv"
+    output: "results/{ds}/stage2/metrics.tsv"
+    params: fixed = lambda wc: FIXED_K[wc.ds]
+    conda:  ENV_YAML
+    script: "../scripts/python/stage2_eval.py"
+
+###############################################################################
+# Stage 3 – figures
+###############################################################################
+# ─────────────────────────────────────────────────────────────
+rule plot_stage1:
+    input:
+        metrics = "results/{ds}/stage1/metrics_k{K}.tsv",
+        freq    = "results/{ds}/stage1/freq_k{K}.csv"
     output:
-        "results/{ds}/stage2/metrics.tsv"
+        per_split      = "figures/{ds}/stage1_k{K}/per_split.png",
+        gene_frequency = "figures/{ds}/stage1_k{K}/gene_frequency.png",
+        mean_se        = "figures/{ds}/stage1_k{K}/mean_se.png"
     params:
-        fixed    = lambda w: config["fixed_k"][w.ds]
-    script:
-        "../scripts/python/stage2_eval.py"
-
-
+        title = lambda wc: f"{wc.ds}  |  K={wc.K}"
+    conda:  ENV_YAML
+    script: "../scripts/python/plots/plot_stage1.py"   # ← **no leading “../scripts/python”**
+# ─────────────────────────────────────────────────────────────

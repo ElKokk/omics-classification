@@ -10,6 +10,7 @@ dependencies:
   - pandas
   - scikit-learn
   - mlens
+  - seaborn
   #R
   - r-tidyverse
   - r-caret
