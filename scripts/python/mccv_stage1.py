@@ -1,116 +1,108 @@
 """
-Stage‑1 Monte‑Carlo CV for prostmat
-──────────────────────────────────
-* 100 stratified 2/3‑1/3 splits
-* limma ranking on train fold
-* Linear Discriminant Analysis
-* Outputs
-    ├─ results/{ds}/stage1/metrics_k{K}.tsv
-    └─ results/{ds}/stage1/freq_k{K}.csv      (gene, count)
+Stage‑1 ― Monte‑Carlo cross‑validation for the *prostmat* dataset
+================================================================
+• 100 stratified splits (2⁄3 train · 1⁄3 test)
+• limma + moderated‑t ranking on the **train** fold
+• keep top‑K genes, fit Linear Discriminant Analysis (LDA)
+• save per‑split metrics + gene‑selection frequency
+----------------------------------------------------------------
+Outputs
+  results/{ds}/stage1/metrics_k{K}.tsv   # 100 × 4 table
+  results/{ds}/stage1/freq_k{K}.csv      # gene, count
 """
-
-# ----------------- imports ---------------------------------------------------
+# ───── imports ──────────────────────────────────────────────────────────────
 from pathlib import Path
 import logging, re
 import numpy as np, pandas as pd
-
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.metrics import confusion_matrix
-
 from rpy2.robjects import r, pandas2ri, packages
 pandas2ri.activate()
 
-# ----------------- Snakemake I/O ---------------------------------------------
-mat_path    = snakemake.input["matrix"]
-metrics_tsv = snakemake.output["metrics"]
-freq_csv    = snakemake.output["freq"]
-K           = int(snakemake.params["k"])
+# ──────── file names handled by snakemake ────────────────────────────────
+MATRIX_CSV  = Path(snakemake.input["matrix"])
+OUT_METRICS = Path(snakemake.output["metrics"])
+OUT_FREQ    = Path(snakemake.output["freq"])
+TOP_K       = int(snakemake.params["k"])
 
-# ----------------- logging ----------------------------------------------------
-logging.basicConfig(format="%(levelname)s | %(message)s",
-                    level=logging.INFO, force=True)
-logging.info("Stage‑1  |  dataset=prostmat  |  K=%d", K)
+# ──────── logging straight to the terminal ─────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+logging.info("Stage‑1 | dataset=prostmat | K=%d", TOP_K)
 
-# ----------------- loader -----------------------------------------------------
-def load_expression(fp: str | Path) -> pd.DataFrame:
-
-    df = pd.read_csv(fp, header=None).drop(columns=[0])
-    df.columns = df.iloc[0, :].tolist()
-    mat = df.iloc[1:, :].astype(float)
-    mat.index = [str(i) for i in range(mat.shape[0])]
+# ───── 1.loading expression matrix ───────────────────────────────────────────
+def read_prostmat(csv_path: Path) -> pd.DataFrame:
+    """prostmat.csv → DataFrame (genes × samples)."""
+    df = pd.read_csv(csv_path, header=None).drop(columns=[0])
+    df.columns = df.iloc[0].tolist()          # sample names
+    mat = df.iloc[1:].astype(float)           # numeric values
+    mat.index = mat.index.map(str)            # gene ids as str
     return mat
 
-expr = load_expression(mat_path)
+expr = read_prostmat(MATRIX_CSV)
 
-def norm_id(s: str) -> str:
-
-    return re.sub(r"\.0$", "", str(s).lstrip("X"))
-
-expr.index = expr.index.map(norm_id)
-expr = expr[~expr.index.duplicated(keep="first")]
+# normalizing row names
+expr.index = (expr.index
+                .str.lstrip("X")
+                .str.replace(r"\.0$", "", regex=True))
+expr = expr[~expr.index.duplicated()]
 
 samples = expr.columns
-classes = np.array(["Cancer" if "cancer" in s.lower() else "Control"
-                    for s in samples])
+classes = np.where(samples.str.contains("cancer", case=False), "Cancer", "Control")
 
-# ----------------- limma ----------------------------------------------
-limma = packages.importr("limma", suppress_messages=True)
+# ───── 2.pre‑load limma
+_ = packages.importr("limma", suppress_messages=True)
 
-# ----------------- helpers ----------------------------------------------------
-def mce_sens_spec(y_true, y_pred):
+# ───── 3. Helpers
+def metrics(y_true, y_pred):
     tn, fp, fn, tp = confusion_matrix(
         y_true, y_pred, labels=["Control", "Cancer"]).ravel()
-    mce  = 1 - (tp + tn) / len(y_true)
-    sens = tp / (tp + fn) if (tp + fn) else np.nan
-    spec = tn / (tn + fp) if (tn + fp) else np.nan
-    return mce, sens, spec
+    return {
+        "MCE": 1 - (tp + tn) / len(y_true),
+        "Sensitivity": tp / (tp + fn) if tp + fn else np.nan,
+        "Specificity": tn / (tn + fp) if tn + fp else np.nan,
+    }
 
-# ----------------- Monte‑Carlo loop ------------------------------------------
-metric_rows, gene_counter = [], {}
+# ───── 4. Monte‑Carlo CV loop ──────────────────────────────────────────────
+gene_counter, rows = {}, []
 sss = StratifiedShuffleSplit(n_splits=100, test_size=0.33, random_state=42)
 
-for i, (tr, te) in enumerate(sss.split(samples, classes), 1):
-    tr_cols, te_cols = samples[tr], samples[te]
+for split_no, (train_idx, test_idx) in enumerate(sss.split(samples, classes), 1):
+    tr_samples, te_samples = samples[train_idx], samples[test_idx]
 
-    # ---------- limma ranking on train fold ----------------------------------
-    r.assign("mat_py", pandas2ri.py2rpy(expr[tr_cols]))
-    design = ",".join(["1" if classes[j] == "Cancer" else "0" for j in tr])
-    r(f"design <- model.matrix(~ factor(c({design})))")
-
-    r("""
-        suppressMessages({
-            fit <- eBayes(lmFit(mat_py, design))
-        })
-    """)
-    top_genes = [norm_id(g) for g in list(
-        r(f"topTable(fit, n={K}, sort.by='t')").rownames)]
+    # 4‑a limma ranking on training data
+    r.assign("mat_py", pandas2ri.py2rpy(expr[tr_samples]))
+    design_vec = ",".join("1" if classes[i] == "Cancer" else "0" for i in train_idx)
+    r(f"design <- model.matrix(~ factor(c({design_vec})))")
+    r("suppressMessages(fit <- eBayes(lmFit(mat_py, design)))")
+    top_genes = [g.lstrip("X").removesuffix(".0")
+                 for g in r(f"topTable(fit, n={TOP_K}, sort.by='t')").rownames]
 
     for g in top_genes:
         gene_counter[g] = gene_counter.get(g, 0) + 1
 
-    # ---------- LDA ----------------------------------------------------------
-    Xtr = expr.loc[top_genes, tr_cols].T.values
-    Xte = expr.loc[top_genes, te_cols].T.values
-    ytr, yte = classes[tr], classes[te]
+    # 4‑b LDA with those genes
+    Xtr = expr.loc[top_genes, tr_samples].T.values
+    Xte = expr.loc[top_genes, te_samples].T.values
+    ytr, yte = classes[train_idx], classes[test_idx]
 
-    mce, sens, spec = mce_sens_spec(yte,
-                                    LinearDiscriminantAnalysis()
-                                    .fit(Xtr, ytr).predict(Xte))
+    clf = LinearDiscriminantAnalysis().fit(Xtr, ytr)
+    res = metrics(yte, clf.predict(Xte))
+    res["split"] = split_no
+    rows.append(res)
 
-    metric_rows.append({"split": i, "MCE": mce,
-                        "Sensitivity": sens, "Specificity": spec})
-    logging.info("split %3d | MCE=%.3f  Sens=%.3f  Spec=%.3f",
-                 i, mce, sens, spec)
+    logging.info("split %3d | MCE %.3f | Sens %.3f | Spec %.3f",
+                 split_no, res["MCE"], res["Sensitivity"], res["Specificity"])
 
+# ───── 5.wririting and the results ────────────────────────────────────────────────────
+OUT_METRICS.parent.mkdir(parents=True, exist_ok=True)
+pd.DataFrame(rows).to_csv(OUT_METRICS, sep="\t", index=False)
 
-Path(metrics_tsv).parent.mkdir(parents=True, exist_ok=True)
-pd.DataFrame(metric_rows).to_csv(metrics_tsv, sep="\t", index=False)
+OUT_FREQ.parent.mkdir(parents=True, exist_ok=True)
+(pd.Series(gene_counter, name="count")
+   .sort_values(ascending=False)
+   .rename_axis("gene")
+   .reset_index()
+   .to_csv(OUT_FREQ, index=False))
 
-freq_df = (pd.Series(gene_counter, name="count")
-             .sort_values(ascending=False)
-             .reset_index().rename(columns={"index": "gene"}))
-Path(freq_csv).parent.mkdir(parents=True, exist_ok=True)
-freq_df.to_csv(freq_csv, index=False)
-
-logging.info("Stage‑1 finished  →  %s  |  %s", metrics_tsv, freq_csv)
+logging.info("Saved: %s  •  %s", OUT_METRICS, OUT_FREQ)
