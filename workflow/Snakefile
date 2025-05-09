@@ -68,7 +68,8 @@ rule plot_stage1:
         gene_frequency = "figures/{ds}/stage1_k{K}/gene_frequency.png",
         mean_se        = "figures/{ds}/stage1_k{K}/mean_se.png"
     params:
-        title = lambda wc: f"{wc.ds}  |  K={wc.K}"
+        title = lambda wc: f"{wc.ds}  |  K={wc.K}",
+        method = "LDA"   # default
     conda:  ENV_YAML
     script: "../scripts/python/plots/plot_stage1.py"   # ← **no leading “../scripts/python”**
 # ─────────────────────────────────────────────────────────────
