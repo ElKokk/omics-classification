@@ -2,7 +2,7 @@
 #  S n a k e m a k e  w o r k f l o w
 ###############################################################################
 import os
-ENV_YAML = os.path.join(os.getcwd(), "env", "environment.yml")   # ← one name
+ENV_YAML = os.path.join(os.getcwd(), "env", "environment.yml")
 
 # ------------------------------------------------------------------ #
 configfile: "workflow/config.yaml"
@@ -22,7 +22,7 @@ rule all:
         # expand("results/{ds}/stage1/metrics_k{K}.tsv", ds=DATASETS, K=SIG_SIZES),
 
 ###############################################################################
-# Stage 0 – (placeholder copy)
+# Stage0 – (I may need it later)
 ###############################################################################
 rule copy_matrix:
     input:  "data/raw/{ds}.csv"
@@ -31,7 +31,7 @@ rule copy_matrix:
     shell:  "cp {input} {output}"
 
 ###############################################################################
-# Stage 1 – variable‑K Monte‑Carlo CV
+# Stage1 – variable‑K Monte‑Carlo CV
 ###############################################################################
 rule mccv_stage1:
     input:
@@ -44,7 +44,7 @@ rule mccv_stage1:
     script: "../scripts/python/mccv_stage1.py"
 
 ###############################################################################
-# Stage 2 – fixed‑signature evaluation
+# Stage2 – fixed‑signature evaluation
 ###############################################################################
 rule stage2_fixed_signature:
     input:
@@ -56,7 +56,7 @@ rule stage2_fixed_signature:
     script: "../scripts/python/stage2_eval.py"
 
 ###############################################################################
-# Stage 3 – figures
+# Stage – figures
 ###############################################################################
 # ─────────────────────────────────────────────────────────────
 rule plot_stage1:
@@ -69,7 +69,7 @@ rule plot_stage1:
         mean_se        = "figures/{ds}/stage1_k{K}/mean_se.png"
     params:
         title = lambda wc: f"{wc.ds}  |  K={wc.K}",
-        method = "LDA"   # default
+        method = "LDA"
     conda:  ENV_YAML
-    script: "../scripts/python/plots/plot_stage1.py"   # ← **no leading “../scripts/python”**
+    script: "../scripts/python/plots/plot_stage1.py"
 # ─────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 """
-Stage‑1 visualisations (Monte‑Carlo CV)
+Stage‑1 visualisations
 ---------------------------------------
 PNG outputs per (dataset, K):
 
-1. per_split.png      – line chart (with dots) of MCE, Sens., Spec. per split
-2. gene_frequency.png – vertical bar‑plot of gene counts (train‑fold ranking)
+1. per_split.png      – line chart of MCE, Sens., Spec. per split
+2. gene_frequency.png – vertical bar‑plot of gene counts
 3. mean_se.png        – box‑plots of MCE, Sens., Spec. distributions
 """
 

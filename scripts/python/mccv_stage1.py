@@ -1,14 +1,14 @@
 """
-Stage‑1 ― Monte‑Carlo cross‑validation for the *prostmat* dataset
+Stage‑1 ― Monte‑Carlo cross‑validation for the prostmat data (FOR NOW)
 ================================================================
 • 100 stratified splits (2⁄3 train · 1⁄3 test)
-• limma + moderated‑t ranking on the **train** fold
-• keep top‑K genes, fit Linear Discriminant Analysis (LDA)
-• save per‑split metrics + gene‑selection frequency
+• limma + moderated‑t ranking on the train fold -- I WILL CHECK THAT AGAIN LATER
+• keep top‑K genes, fit of a variety of classifiers
+• save per‑split metrics + gene‑selection frequency
 ----------------------------------------------------------------
 Outputs
-  results/{ds}/stage1/metrics_k{K}.tsv   # 100 × 4 table
-  results/{ds}/stage1/freq_k{K}.csv      # gene, count
+  results/{ds}/stage1/metrics_k{K}.tsv
+  results/{ds}/stage1/freq_k{K}.csv
 """
 # ───── imports ──────────────────────────────────────────────────────────────
 from pathlib import Path
@@ -32,11 +32,10 @@ logging.info("Stage‑1 | dataset=prostmat | K=%d", TOP_K)
 
 # ───── 1.loading expression matrix ───────────────────────────────────────────
 def read_prostmat(csv_path: Path) -> pd.DataFrame:
-    """prostmat.csv → DataFrame (genes × samples)."""
     df = pd.read_csv(csv_path, header=None).drop(columns=[0])
-    df.columns = df.iloc[0].tolist()          # sample names
-    mat = df.iloc[1:].astype(float)           # numeric values
-    mat.index = mat.index.map(str)            # gene ids as str
+    df.columns = df.iloc[0].tolist()
+    mat = df.iloc[1:].astype(float)
+    mat.index = mat.index.map(str)
     return mat
 
 expr = read_prostmat(MATRIX_CSV)
@@ -53,7 +52,7 @@ classes = np.where(samples.str.contains("cancer", case=False), "Cancer", "Contro
 # ───── 2.pre‑load limma
 _ = packages.importr("limma", suppress_messages=True)
 
-# ───── 3. Helpers
+# ───── 3.Helpers
 def metrics(y_true, y_pred):
     tn, fp, fn, tp = confusion_matrix(
         y_true, y_pred, labels=["Control", "Cancer"]).ravel()
