@@ -1,72 +1,110 @@
-#!/usr/bin/env python
 """
-Plot Stage‑1 results.
+Stage‑1 visualisations (Monte‑Carlo CV)
+---------------------------------------
+PNG outputs per (dataset, K):
 
-Inputs  (from Snakemake):
-    snakemake.input.metrics   ← TSV with per‑split metrics
-    snakemake.input.freq      ← CSV with gene selection counts
-Outputs (from Snakemake):
-    snakemake.output[...]     ← three PNGs
-
-Params  (from Snakemake):
-    snakemake.params.title    ← figure title (e.g. dataset | K info)
+1. per_split.png      – line chart (with dots) of MCE, Sens., Spec. per split
+2. gene_frequency.png – vertical bar‑plot of gene counts (train‑fold ranking)
+3. mean_se.png        – box‑plots of MCE, Sens., Spec. distributions
 """
 
 from pathlib import Path
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-sns.set_theme()
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
+import matplotlib.patches as mpatches
+import sys, textwrap
 
-# ───────────────────────── helper ──────────────────────────
-def make_figures(tab_path: Path, freq_path: Path, outdir: Path,
-                 title: str) -> None:
-    """Create three PNGs inside *outdir*."""
-    outdir.mkdir(parents=True, exist_ok=True)
+# ────────────── Snakemake I/O ─────────────────────────────────────── #
+metrics_fp = snakemake.input["metrics"]
+freq_fp    = snakemake.input["freq"]
+title      = snakemake.params["title"]
+method     = snakemake.params.get("method", "LDA")
 
-    # 1 ▸ performance per split
-    df = pd.read_table(tab_path)
-    fig, ax = plt.subplots()
-    for col in ["MCE", "Sensitivity", "Specificity"]:
-        ax.plot(df["split"], df[col], marker=".", lw=.8, label=col)
-    ax.set(xlabel="Monte‑Carlo split", ylabel="value", title=title)
-    ax.legend()
-    fig.savefig(outdir / "per_split.png", dpi=300, bbox_inches="tight")
+outdir = Path(snakemake.output[0]).parent
+outdir.mkdir(parents=True, exist_ok=True)
 
-    # 2 ▸ gene‑selection frequencies
-    freq_df = pd.read_csv(freq_path).sort_values("count", ascending=False)
-    top = freq_df.head(25)
-    plt.figure(figsize=(6, 4))
-    sns.barplot(data=top, x="count", y="gene", orient="h")
-    plt.xlabel("selection count (out of 100 splits)")
-    plt.ylabel("gene")
-    plt.title(f"{title}\ntop‑25 gene frequency")
-    plt.tight_layout()
-    plt.savefig(outdir / "gene_frequency.png", dpi=300)
+# ────────────── style ─────────────────────────────────────────────── #
+sns.set_theme(style="whitegrid")
+plt.rcParams.update({
+    "axes.labelsize" : 11,
+    "axes.titlesize" : 12,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+})
 
-    # 3 ▸ mean ± SE bar
-    mean_se = df[["MCE", "Sensitivity", "Specificity"]].agg(
-        ["mean", lambda x: x.std(ddof=1)/np.sqrt(len(x))]).T
-    mean_se.columns = ["mean", "se"]
-    plt.figure(figsize=(4, 3))
-    plt.errorbar(mean_se.index, mean_se["mean"], yerr=mean_se["se"],
-                 fmt="o", capsize=4)
-    plt.ylabel("metric value")
-    plt.ylim(0, 1)
-    plt.title(f"{title}\nmean ± SE over 100 splits")
-    plt.tight_layout()
-    plt.savefig(outdir / "mean_se.png", dpi=300)
+df = pd.read_csv(metrics_fp, sep="\t")
 
+# ═══════════════════════════════════════════════════════════════════ #
+# 1 ▍ Line plot for each metric by split
+# ═══════════════════════════════════════════════════════════════════ #
+long = df.melt(id_vars="split",
+               value_vars=["MCE", "Sensitivity", "Specificity"],
+               var_name="Metric", value_name="Value")
 
-# ───────────────────────── entry point ─────────────────────
-if __name__ == "__main__":
-    # Snakemake passes everything we need
-    metrics_tsv = Path(snakemake.input.metrics)
-    freq_csv    = Path(snakemake.input.freq)
-    # output[0] is …/per_split.png → its parent is the figure directory
-    fig_dir     = Path(snakemake.output[0]).parent
-    ttl         = snakemake.params.title
+fig, ax = plt.subplots(figsize=(12.0, 5.0))
+sns.lineplot(data=long, x="split", y="Value",
+             hue="Metric", style="Metric",
+             markers=True, dashes=False, linewidth=1.4,
+             markersize=5, palette="husl", ax=ax)
 
-    make_figures(metrics_tsv, freq_csv, fig_dir, ttl)
-    print(f"[done] Figures written to {fig_dir}")
+ax.set_xlabel("Monte Carlo split #")
+ax.set_ylabel("Score")
+ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+ax.set_title(textwrap.fill(f"{title} · {method} · metrics per split", 70))
+
+ax.legend(title=None, loc="upper left",
+          bbox_to_anchor=(1.02, 1.0), borderaxespad=0.)
+fig.tight_layout()
+fig.savefig(outdir / "per_split.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+
+# ═══════════════════════════════════════════════════════════════════ #
+# 2 ▍ Barplot of gene frequency
+# ═══════════════════════════════════════════════════════════════════ #
+freq = (pd.read_csv(freq_fp)
+          .sort_values("count", ascending=False)
+          .reset_index(drop=True))
+
+TOP_N = 30
+shown = freq.head(TOP_N)
+
+fig, ax = plt.subplots(figsize=(7.4, 4.4))
+sns.barplot(data=shown,
+            x="gene", y="count",
+            order=shown["gene"],
+            color=sns.color_palette("crest", 1)[0],
+            ax=ax)
+ax.set_xlabel("Gene")
+ax.set_ylabel(f"Appearances in top‑K (max {df.shape[0]})")
+ax.set_xticklabels(ax.get_xticklabels(), rotation=65, ha="right")
+ax.set_title(textwrap.fill(f"{title} · {method} · top {TOP_N} genes", 70))
+ax.margins(x=0.01)
+fig.tight_layout()
+fig.savefig(outdir / "gene_frequency.png", dpi=300)
+plt.close(fig)
+
+# ═══════════════════════════════════════════════════════════════════ #
+# 3 ▍ Boxplot of MCE, Sensitivity, Specificity
+# ═══════════════════════════════════════════════════════════════════ #
+palette = sns.color_palette("husl", 3)
+order   = ["MCE", "Sensitivity", "Specificity"]
+
+fig, ax = plt.subplots(figsize=(8.5, 5.5))
+sns.boxplot(data=long, x="Metric", y="Value",
+            order=order, palette=palette, width=0.6, ax=ax)
+ax.set_ylabel("Score")
+ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+ax.set_title(textwrap.fill(f"{title} · {method} · distribution of metrics", 70))
+
+handles = [mpatches.Patch(facecolor=palette[i], label=order[i])
+           for i in range(3)]
+ax.legend(handles=handles, title=None, loc="upper left",
+          bbox_to_anchor=(1.02, 1.0), borderaxespad=0.)
+
+fig.tight_layout()
+fig.savefig(outdir / "mean_se.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+
+print(f"[done] Figures written to {outdir}", file=sys.stderr)
