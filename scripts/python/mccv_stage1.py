@@ -49,10 +49,13 @@ expr.index = (expr.index
                 .str.replace(r"\.0$", "", regex=True))
 expr = expr[~expr.index.duplicated(keep="first")]
 
-samples = expr.columns.to_numpy()
+samples = expr.columns.astype(str)
+
 classes = np.where(
-    np.char.find(np.char.lower(samples), "cancer") >= 0,
-    "Cancer", "Control")
+    pd.Series(samples).str.contains("cancer", case=False, na=False),
+    "Cancer",
+    "Control",
+)
 
 # ────────────────── 2 ▸ load R-package limma once ───────────────────
 _ = packages.importr("limma", suppress_messages=True)
