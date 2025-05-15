@@ -2,22 +2,29 @@ name: omics-thesis
 channels:
   - conda-forge
   - bioconda
+  - defaults
+
 dependencies:
-  - python=3.12.6
-  - r-base=4.4.2
-  #Py
+
+  - python=3.11
+  - r-base=4.3
+
+  # Python
   - numpy
   - pandas
   - scikit-learn
-  - mlens
   - seaborn
-  #R
-  - r-tidyverse
+  - mlens
+  - rpy2=3.5.*
+
+  # R
+  - bioconductor-limma
   - r-caret
   - r-superlearner
   - r-randomforest
   - r-e1071
 
+  # Snakemake
   - pip
   - pip:
       - snakemake
