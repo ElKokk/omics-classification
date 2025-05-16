@@ -3,7 +3,7 @@ Stage-1 – Monte-Carlo cross-validation
 =====================================
 * 100 stratified splits (2/3 train · 1/3 test)
 * limma + moderated-t ranking on the train fold
-* keep top-K genes, fit Linear Discriminant Analysis
+* keeping top-K genes, fit Linear Discriminant Analysis
 --------------------------------------------------------------------
 Writes
     results/{ds}/stage1/metrics_k{K}.tsv   (one row per split)
@@ -32,13 +32,13 @@ logging.basicConfig(format="%(levelname)s | %(message)s",
                     level=logging.INFO, force=True)
 logging.info("Stage-1  |  dataset=prostmat  |  K=%d", TOP_K)
 
-# ────────────────── 1 ▸ load expression matrix ──────────────────────
+# ────────────────── 1 ▸ loading expression matrix ──────────────────────
 def read_prostmat(fp: Path) -> pd.DataFrame:
-    """prostmat.csv – first col is empty, second row has sample IDs."""
+
     df = pd.read_csv(fp, header=None).drop(columns=[0])
-    df.columns = df.iloc[0]                   # 101 samples
+    df.columns = df.iloc[0]
     mat = df.iloc[1:].astype(float)
-    mat.index = mat.index.map(str)            # 6033 genes
+    mat.index = mat.index.map(str)
     return mat
 
 expr = read_prostmat(MATRIX_CSV)
@@ -83,7 +83,6 @@ for split_no, (tr, te) in enumerate(sss.split(samples, classes), 1):
     r(f"design <- model.matrix(~ factor(c({design})))")
     r("suppressMessages(fit <- eBayes(lmFit(mat_py, design)))")
 
-    # pandas ≥ 2.0 → rownames became the DataFrame index ⬇︎
     df_top = r(f"topTable(fit, n={TOP_K}, sort.by='t')")
     top_genes = [re.sub(r"\.0$", "", g.lstrip("X")) for g in df_top.index]
 
