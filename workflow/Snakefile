@@ -15,11 +15,12 @@ FIXED_K    = config["fixed_k"]
 ###############################################################################
 rule all:
     input:
-        expand("results/{ds}/stage2/metrics.tsv", ds=DATASETS),
-        expand("figures/{ds}/stage1_k{K}/per_split.png", ds=DATASETS, K=SIG_SIZES),
-        expand("figures/{ds}/stage1_k{K}/gene_frequency.png",ds=DATASETS,K=SIG_SIZES),
-        expand("figures/{ds}/stage1_k{K}/mean_se.png",ds=DATASETS,K=SIG_SIZES)
-        # expand("results/{ds}/stage1/metrics_k{K}.tsv", ds=DATASETS, K=SIG_SIZES),
+        expand("results/{ds}/stage2/metrics.tsv",     ds=DATASETS),
+        expand("results/{ds}/stage1/summary_stage1.tsv", ds=DATASETS),   # ← NEW
+        expand("figures/{ds}/stage1_k{K}/per_split.png",      ds=DATASETS, K=SIG_SIZES),
+        expand("figures/{ds}/stage1_k{K}/gene_frequency.png", ds=DATASETS, K=SIG_SIZES),
+        expand("figures/{ds}/stage1_k{K}/mean_se.png",        ds=DATASETS, K=SIG_SIZES)
+
 
 ###############################################################################
 # Stage0 – (I may need it later)
@@ -55,6 +56,9 @@ rule stage2_fixed_signature:
     conda:  ENV_YAML
     script: "../scripts/python/stage2_eval.py"
 
+
+
+
 ###############################################################################
 # Stage – figures
 ###############################################################################
@@ -72,4 +76,19 @@ rule plot_stage1:
         method = "LDA"
     conda:  ENV_YAML
     script: "../scripts/python/plots/plot_stage1.py"
-# ─────────────────────────────────────────────────────────────
+
+
+###############################################################################
+# Stage 3 – aggregate mean ± SE across 100 splits
+###############################################################################
+rule aggregate_stage1:
+    input:
+        lambda wc: expand(
+            f"results/{wc.ds}/stage1/metrics_k{{K}}.tsv", K=SIG_SIZES
+        )
+    output:
+        f"results/{{ds}}/stage1/summary_stage1.tsv"
+    conda: ENV_YAML
+    script: "../scripts/python/aggregate_stage1.py"
+
+
