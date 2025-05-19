@@ -2,39 +2,42 @@
 Stage-1 – Monte-Carlo cross-validation
 =====================================
 * 100 stratified splits (2/3 train · 1/3 test)
-* limma + moderated-t ranking on the train fold
-* keeping top-K genes, fit Linear Discriminant Analysis
+* limma + moderated-t ranking calculated **on the train fold**
+* keep the top-K genes, then fit two classifiers
+      - LDA
+      - DLDA  -- For python I make use of Gaussian Naïve Bayes with class-independent variances
 --------------------------------------------------------------------
-Writes
-    results/{ds}/stage1/metrics_k{K}.tsv   (one row per split)
-    results/{ds}/stage1/freq_k{K}.csv      (gene, count)
+Outputs
+    results/{ds}/stage1/metrics_k{K}.tsv
+    results/{ds}/stage1/freq_k{K}.csv
 """
-# ───────────────────── imports ───────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
 from pathlib import Path
 import logging, re
 import numpy as np, pandas as pd
 
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import confusion_matrix
 
 from rpy2.robjects import r, pandas2ri, packages
 pandas2ri.activate()
 
-# ────────────────── Snakemake I/O ────────────────────────────────────
+# ────────── Snakemake I/O ─────────────────────────────────────────────────
 MATRIX_CSV  = Path(snakemake.input["matrix"])
 OUT_METRICS = Path(snakemake.output["metrics"])
 OUT_FREQ    = Path(snakemake.output["freq"])
 TOP_K       = int(snakemake.params["k"])
+DATASET     = MATRIX_CSV.stem.replace("_matrix", "")
 
-# ───────────────────── logging ───────────────────────────────────────
+# ────────── logging ───────────────────────────────────────────────────────
 logging.basicConfig(format="%(levelname)s | %(message)s",
                     level=logging.INFO, force=True)
-logging.info("Stage-1  |  dataset=prostmat  |  K=%d", TOP_K)
+logging.info("Stage-1  |  dataset=%s  |  K=%d", DATASET, TOP_K)
 
-# ────────────────── 1 ▸ loading expression matrix ──────────────────────
+# ────────── 1 ▸ read expression matrix ───────────────────────────────────
 def read_prostmat(fp: Path) -> pd.DataFrame:
-
     df = pd.read_csv(fp, header=None).drop(columns=[0])
     df.columns = df.iloc[0]
     mat = df.iloc[1:].astype(float)
@@ -43,7 +46,7 @@ def read_prostmat(fp: Path) -> pd.DataFrame:
 
 expr = read_prostmat(MATRIX_CSV)
 
-# normalise gene IDs
+# normalising the string IDs
 expr.index = (expr.index
                 .str.lstrip("X")
                 .str.replace(r"\.0$", "", regex=True))
@@ -51,36 +54,37 @@ expr = expr[~expr.index.duplicated(keep="first")]
 
 samples = expr.columns.astype(str)
 
+# phenotype labels ---------------------------------------------------------
 classes = np.where(
     pd.Series(samples).str.contains("cancer", case=False, na=False),
     "Cancer",
     "Control",
 )
 
-# ────────────────── 2 ▸ load R-package limma once ───────────────────
+# ────────── 2 ▸ limma ───────────────────────────
 _ = packages.importr("limma", suppress_messages=True)
 
-# ────────────────── 3 ▸ helper for metrics ──────────────────────────
+# ────────── 3 ▸ helper for split-wise metrics ─────────────────────────────
 def split_metrics(y_true, y_pred):
     tn, fp, fn, tp = confusion_matrix(
         y_true, y_pred, labels=["Control", "Cancer"]).ravel()
     return dict(
-        MCE=1 - (tp + tn) / len(y_true),
-        Sensitivity=tp / (tp + fn) if tp + fn else np.nan,
-        Specificity=tn / (tn + fp) if tn + fp else np.nan
+        MCE         = 1 - (tp + tn) / len(y_true),
+        Sensitivity = tp / (tp + fn) if tp + fn else np.nan,
+        Specificity = tn / (tn + fp) if tn + fp else np.nan,
     )
 
-# ────────────────── 4 ▸ Monte-Carlo loop ────────────────────────────
+# ────────── 4 ▸ Monte-Carlo loop ──────────────────────────────────────────
 gene_counter, rows = {}, []
 sss = StratifiedShuffleSplit(n_splits=100, test_size=0.33, random_state=42)
 
 for split_no, (tr, te) in enumerate(sss.split(samples, classes), 1):
     tr_cols, te_cols = samples[tr], samples[te]
 
-    # ---- 4-a limma ranking on training fold -------------------------
+    # ---- 4-a limma ranking on the current training fold ------------------
     r.assign("mat_py", pandas2ri.py2rpy(expr[tr_cols]))
-    design = ",".join("1" if classes[i] == "Cancer" else "0" for i in tr)
-    r(f"design <- model.matrix(~ factor(c({design})))")
+    design_vec = ",".join("1" if classes[i] == "Cancer" else "0" for i in tr)
+    r(f"design <- model.matrix(~ factor(c({design_vec})))")
     r("suppressMessages(fit <- eBayes(lmFit(mat_py, design)))")
 
     df_top = r(f"topTable(fit, n={TOP_K}, sort.by='t')")
@@ -89,20 +93,25 @@ for split_no, (tr, te) in enumerate(sss.split(samples, classes), 1):
     for g in top_genes:
         gene_counter[g] = gene_counter.get(g, 0) + 1
 
-    # ---- 4-b LDA on top-K genes ------------------------------------
     Xtr = expr.loc[top_genes, tr_cols].T.values
     Xte = expr.loc[top_genes, te_cols].T.values
     ytr, yte = classes[tr], classes[te]
 
-    clf = LinearDiscriminantAnalysis().fit(Xtr, ytr)
-    res = split_metrics(yte, clf.predict(Xte))
-    res["split"] = split_no
-    rows.append(res)
+    # ---- 4-b model zoo ----------------------------------------------------
+    MODELS = {
+        "LDA" : LinearDiscriminantAnalysis(),
+        "DLDA": GaussianNB()
+    }
 
-    logging.info("split %3d | MCE %.3f | Sens %.3f | Spec %.3f",
-                 split_no, res["MCE"], res["Sensitivity"], res["Specificity"])
+    for name, clf in MODELS.items():
+        yhat = clf.fit(Xtr, ytr).predict(Xte)
+        res  = split_metrics(yte, yhat)
+        res.update(split=split_no, model=name)
+        rows.append(res)
 
-# ────────────────── 5 ▸ write outputs ───────────────────────────────
+    logging.info("split %3d ▸ done", split_no)
+
+# ────────── 5 ▸ write outputs ─────────────────────────────────────────────
 OUT_METRICS.parent.mkdir(parents=True, exist_ok=True)
 pd.DataFrame(rows).to_csv(OUT_METRICS, sep="\t", index=False)
 
