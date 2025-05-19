@@ -9,4 +9,4 @@ RUN conda config --system --set channel_priority strict
 
 ENV PATH=/opt/conda/envs/omics-thesis/bin:$PATH
 
-ENTRYPOINT ["snakemake", "--cores", "all"]
+ENTRYPOINT ["snakemake", "-s", "workflow/Snakefile", "--cores", "all"]
