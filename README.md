@@ -26,25 +26,7 @@ CREATE THE ENVIRONMENT AND INSTALL PACKAGES
 conda env create -f env/environment.yml
 conda activate omics-thesis
 
-RUN THE FULL PIPELINE
+To RUN THE FULL PIPELINE on Windows' Git Bash :
 
-snakemake --use-conda -j4
+docker run --rm -v "$(pwd -W):/omics" omics-thesis:dev --use-conda --cores 4
 
-
-(OR RUN JUST STAGE1)
-
-snakemake --use-conda -j4 mccv_stage1
-
-
-DOCKERFILE
-
-the prebuilt is on my drive: omics-thesis.tar
-
-use:
-
-docker load -I omics-thesis.tar
-
-you can execute it with:
-
-docker run --rm -v "$PWD":/work -w /work omics-thesis \
-           snakemake
