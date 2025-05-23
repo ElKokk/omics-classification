@@ -1,110 +1,110 @@
-"""
-Stage‑1 visualisations
----------------------------------------
-PNG outputs per (dataset, K):
-
-1. per_split.png      – line chart of MCE, Sens., Spec. per split
-2. gene_frequency.png – vertical bar‑plot of gene counts
-3. mean_se.png        – box‑plots of MCE, Sens., Spec. distributions
-"""
-
 from pathlib import Path
+import numpy as np
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mtick
-import matplotlib.patches as mpatches
-import sys, textwrap
+import seaborn as sns
+import textwrap
 
-# ────────────── Snakemake I/O ─────────────────────────────────────── #
-metrics_fp = snakemake.input["metrics"]
-freq_fp    = snakemake.input["freq"]
-title      = snakemake.params["title"]
-method     = snakemake.params.get("method", "LDA")
-
-outdir = Path(snakemake.output[0]).parent
-outdir.mkdir(parents=True, exist_ok=True)
-
-# ────────────── style ─────────────────────────────────────────────── #
-sns.set_theme(style="whitegrid")
+sns.set_context("paper")
+sns.set_style("whitegrid")
 plt.rcParams.update({
-    "axes.labelsize" : 11,
-    "axes.titlesize" : 12,
-    "xtick.labelsize": 9,
-    "ytick.labelsize": 9,
+    "figure.dpi": 300,
+    "savefig.bbox": "tight",
+    "font.family": "sans-serif",
 })
 
-df = pd.read_csv(metrics_fp, sep="\t")
+palette_metrics = sns.color_palette("colorblind", 3)
+metric_order = ["MCE", "Sensitivity", "Specificity"]
 
-# ═══════════════════════════════════════════════════════════════════ #
-# 1 ▍ Line plot for each metric by split
-# ═══════════════════════════════════════════════════════════════════ #
-long = df.melt(id_vars="split",
-               value_vars=["MCE", "Sensitivity", "Specificity"],
-               var_name="Metric", value_name="Value")
+###############################################################################
+# Snakemake I/O
+###############################################################################
 
-fig, ax = plt.subplots(figsize=(12.0, 5.0))
-sns.lineplot(data=long, x="split", y="Value",
-             hue="Metric", style="Metric",
-             markers=True, dashes=False, linewidth=1.4,
-             markersize=5, palette="husl", ax=ax)
+metrics_fp = Path(snakemake.input["metrics"])
+freq_fp    = Path(snakemake.input["freq"])
 
-ax.set_xlabel("Monte Carlo split #")
-ax.set_ylabel("Score")
-ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-ax.set_title(textwrap.fill(f"{title} · {method} · metrics per split", 70))
+out_root = Path(snakemake.output[0])  # figures/{ds}/stage1_k{K} (reminder for directory target)
+TITLE    = snakemake.params["title"]
 
-ax.legend(title=None, loc="upper left",
-          bbox_to_anchor=(1.02, 1.0), borderaxespad=0.)
-fig.tight_layout()
-fig.savefig(outdir / "per_split.png", dpi=300, bbox_inches="tight")
-plt.close(fig)
+out_root.mkdir(parents=True, exist_ok=True)
 
-# ═══════════════════════════════════════════════════════════════════ #
-# 2 ▍ Barplot of gene frequency
-# ═══════════════════════════════════════════════════════════════════ #
-freq = (pd.read_csv(freq_fp)
-          .sort_values("count", ascending=False)
-          .reset_index(drop=True))
+###############################################################################
+# my data
+###############################################################################
 
-TOP_N = 30
-shown = freq.head(TOP_N)
+df_metrics = pd.read_csv(metrics_fp, sep="\t")
+df_freq    = pd.read_csv(freq_fp)
 
-fig, ax = plt.subplots(figsize=(7.4, 4.4))
-sns.barplot(data=shown,
-            x="gene", y="count",
-            order=shown["gene"],
-            color=sns.color_palette("crest", 1)[0],
-            ax=ax)
-ax.set_xlabel("Gene")
-ax.set_ylabel(f"Appearances in top‑K (max {df.shape[0]})")
-ax.set_xticklabels(ax.get_xticklabels(), rotation=65, ha="right")
-ax.set_title(textwrap.fill(f"{title} · {method} · top {TOP_N} genes", 70))
-ax.margins(x=0.01)
-fig.tight_layout()
-fig.savefig(outdir / "gene_frequency.png", dpi=300)
-plt.close(fig)
+###############################################################################
+# Plot helpers ---
+###############################################################################
 
-# ═══════════════════════════════════════════════════════════════════ #
-# 3 ▍ Boxplot of MCE, Sensitivity, Specificity
-# ═══════════════════════════════════════════════════════════════════ #
-palette = sns.color_palette("husl", 3)
-order   = ["MCE", "Sensitivity", "Specificity"]
+def plot_gene_frequency(df: pd.DataFrame, out_fp: Path, title: str, top_n: int = 30):
+    sub = df.sort_values("count", ascending=False).head(top_n).copy()
+    sub["gene"] = pd.Categorical(sub["gene"], categories=sub["gene"], ordered=True)
 
-fig, ax = plt.subplots(figsize=(8.5, 5.5))
-sns.boxplot(data=long, x="Metric", y="Value",
-            order=order, palette=palette, width=0.6, ax=ax)
-ax.set_ylabel("Score")
-ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-ax.set_title(textwrap.fill(f"{title} · {method} · distribution of metrics", 70))
+    width = max(6, 0.35 * len(sub))
+    fig, ax = plt.subplots(figsize=(width, 5.5))
+    sns.barplot(data=sub, x="gene", y="count", palette="viridis", ax=ax)
 
-handles = [mpatches.Patch(facecolor=palette[i], label=order[i])
-           for i in range(3)]
-ax.legend(handles=handles, title=None, loc="upper left",
-          bbox_to_anchor=(1.02, 1.0), borderaxespad=0.)
+    ax.set_xlabel(f"Gene (top {top_n})", labelpad=10)
+    ax.set_ylabel("Appearances in top‑K (max 200)", labelpad=10)
+    ax.set_title(textwrap.fill(f"{title} · top {top_n} genes", 70), pad=12)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha="center", fontsize=8)
 
-fig.tight_layout()
-fig.savefig(outdir / "mean_se.png", dpi=300, bbox_inches="tight")
-plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(out_fp, bbox_inches='tight')
+    plt.close(fig)
 
-print(f"[done] Figures written to {outdir}", file=sys.stderr)
+
+def plot_per_split(df: pd.DataFrame, model: str, out_fp: Path, title: str):
+    sub = df[df["model"] == model]
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    for (metric, ls, col) in zip(metric_order, ["-", "--", ":"], palette_metrics):
+        ax.plot(sub["split"], sub[metric], linestyle=ls, marker=".", label=metric, color=col)
+
+    ax.set_xlabel("Monte‑Carlo split", labelpad=10)
+    ax.set_ylabel("Score", labelpad=10)
+    ax.set_ylim(0, 1.05)  # allow for outliers
+    ax.set_title(f"{title} · {model}", pad=12)
+
+    ax.legend(frameon=False, loc="center left", bbox_to_anchor=(1, 0.5))
+    fig.tight_layout()
+    fig.savefig(out_fp, bbox_inches='tight')
+    plt.close(fig)
+
+
+def plot_box(df: pd.DataFrame, model: str, out_fp: Path, title: str):
+    sub = df[df["model"] == model]
+    melt = sub.melt(id_vars=["split", "model"], value_vars=metric_order,
+                    var_name="Metric", value_name="Score")
+
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+    sns.boxplot(data=melt, x="Metric", y="Score", order=metric_order,
+                palette=palette_metrics, ax=ax)
+    sns.stripplot(data=melt, x="Metric", y="Score", order=metric_order,
+                  color="black", size=3, alpha=0.4, jitter=True, ax=ax)
+
+    ax.set_ylim(0, 1.05)
+    ax.set_title(f"{title} · {model} · distribution of metrics", pad=12)
+    ax.set_xlabel("Metric", labelpad=10)
+    ax.set_ylabel("Score", labelpad=10)
+
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in palette_metrics]
+    ax.legend(handles, metric_order, frameon=False, loc="center left", bbox_to_anchor=(1, 0.5))
+
+    fig.tight_layout()
+    fig.savefig(out_fp, bbox_inches='tight')
+    plt.close(fig)
+
+###############################################################################
+# plot generation
+###############################################################################
+plot_gene_frequency(df_freq, out_root / "gene_frequency.png", TITLE)
+
+
+for model in df_metrics["model"].unique():
+    mdl_dir = out_root / model
+    mdl_dir.mkdir(exist_ok=True)
+    plot_per_split(df_metrics, model, mdl_dir / "per_split.png", TITLE)
+    plot_box      (df_metrics, model, mdl_dir / "boxplot.png",   TITLE)
