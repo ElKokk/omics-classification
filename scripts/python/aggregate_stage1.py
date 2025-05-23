@@ -1,24 +1,32 @@
-# plotting per model and k
-from pathlib import Path
-import pandas as pd, numpy as np, re, sys
+"""
+Stage-1 aggregator – combine metrics_k*.tsv into summary_stage1.tsv
+------------------------------------------------------------------
+For each classifier & K it computes mean and SE of MCE, Sensitivity,
+Specificity across the 100 Monte-Carlo splits.
+"""
 
-out_fp  = Path(snakemake.output[0])
-rows    = []
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+out_fp = Path(snakemake.output[0])
+rows   = []
+
+def mean_se(arr):
+    arr = np.asarray(arr, float)
+    return arr.mean(), arr.std(ddof=1) / np.sqrt(len(arr))
 
 for fp in map(Path, snakemake.input):
-    K   = int(re.search(r"metrics_k(\d+)\.tsv", fp.name).group(1))
-    df  = pd.read_csv(fp, sep="\t")
-    for mdl, grp in df.groupby("model"):
-        def mean_se(x): return x.mean(), x.std(ddof=1)/np.sqrt(len(x))
-        r = {"K": K, "model": mdl}
-        for col in ["MCE", "Sensitivity", "Specificity"]:
-            mu, se   = mean_se(grp[col])
-            r[f"{col}_mean"] = mu
-            r[f"{col}_se"]   = se
+    K  = int(fp.stem.split('_k')[1])
+    df = pd.read_csv(fp, sep='\t')
+    for model, grp in df.groupby('model'):
+        r = {'K': K, 'model': model}
+        for metric in ['MCE', 'Sensitivity', 'Specificity']:
+            mu, se = mean_se(grp[metric])
+            r[f'{metric}_mean'] = mu
+            r[f'{metric}_se']   = se
         rows.append(r)
 
 (pd.DataFrame(rows)
-   .sort_values(["K", "model"])
-   .to_csv(out_fp, sep="\t", index=False))
-
-print(f"[aggregate] wrote {out_fp}", file=sys.stderr)
+   .sort_values(['K', 'model'])
+   .to_csv(out_fp, sep='\t', index=False))
