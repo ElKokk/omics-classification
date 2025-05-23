@@ -28,11 +28,11 @@ plt.rcParams.update({
 # Snakemake I/O --
 ###############################################################################
 
-summary_fp = Path(snakemake.input[0])   # results/{ds}/stage1/summary_stage1.tsv
+summary_fp = Path(snakemake.input[0])
 out_mce    = Path(snakemake.output["MCE"])
 out_sens   = Path(snakemake.output["Sensitivity"])
 out_spec   = Path(snakemake.output["Specificity"])
-TITLE      = snakemake.params["title"]   # e.g. f"{ds}"
+TITLE      = snakemake.params["title"]
 
 out_mce.parent.mkdir(parents=True, exist_ok=True)
 
@@ -49,7 +49,7 @@ df = df.sort_values("K")
 ###############################################################################
 
 def plot_metric(metric: str, df: pd.DataFrame, out_fp: Path, title: str):
-    """Line chart of mean ± SE vs K for each model, ticks every 0.025."""
+
     import math, matplotlib.ticker as mticker
     import numpy as np
 
@@ -79,7 +79,7 @@ def plot_metric(metric: str, df: pd.DataFrame, out_fp: Path, title: str):
     ax.set_ylim(lower, upper)
 
 
-    ticks = np.arange(0, upper + 0.0001, 0.025)
+    ticks = np.arange(lower, upper + 0.0001, 0.025)
     ax.set_yticks(ticks)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.3f"))
 
