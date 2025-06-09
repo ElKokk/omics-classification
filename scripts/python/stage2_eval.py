@@ -2,14 +2,14 @@
 Stage-2 – fixed-signature evaluation
 ====================================
 * Signature = top-K genes most frequently selected in Stage-1
-* 100 Monte-Carlo splits (same split logic as Stage-1)
+* X number of Monte-Carlo splits
 * Two classifiers:
       - LDA
-      - DLDA (GaussianNB ≃ diagonal-LDA)
-* Save mean ± SE of each metric per model.
+      - DLDA ( I make use of GaussianNB ≃ diagonal-LDA)
+* I Save mean ± SE of each metric per model.
 --------------------------------------------------------------------
 Writes
-    results/{ds}/stage2/metrics.tsv   (one row per model)
+    results/{ds}/stage2/metrics.tsv
 """
 # ──────────────────────────────────────────────────────────────────────────
 from pathlib import Path
@@ -39,7 +39,7 @@ def mean_se(arr):
     arr = np.asarray(arr)
     return arr.mean(), arr.std(ddof=1) / np.sqrt(len(arr))
 
-# ---------- load expression matrix --------------------------------------
+# ---------- loading of expression matrix --------------------------------------
 expr = (pd.read_csv(matrix_fp, header=None)
           .drop(columns=[0])
           .pipe(lambda df: df.iloc[1:].astype(float)

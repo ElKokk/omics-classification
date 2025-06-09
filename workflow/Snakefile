@@ -1,30 +1,37 @@
 ###############################################################################
-#  S n a k e m a k e  w o r k f l o w
+#  S n a k e m a k e   w o r k f l o w
 ###############################################################################
 import os
 ENV_YAML = os.path.join(os.getcwd(), "env", "environment.yml")
 
-# ------------------------------------------------------------------ #
 configfile: "workflow/config.yaml"
 DATASETS   = config["datasets"]
 SIG_SIZES  = config["sig_sizes"]
 FIXED_K    = config["fixed_k"]
 
 ###############################################################################
-# Final target
+# Final target ─ all files Snakemake must build
 ###############################################################################
 rule all:
     input:
-        expand("results/{ds}/stage2/metrics.tsv",     ds=DATASETS),
-        expand("results/{ds}/stage1/summary_stage1.tsv", ds=DATASETS),
-        expand("figures/{ds}/stage1_k{K}/",      ds=DATASETS, K=SIG_SIZES),
-        expand("figures/{ds}/stage1_summary/MCE.png", ds=DATASETS),
-        expand("figures/{ds}/stage1_summary/Sensitivity.png",ds=DATASETS),
-        expand("figures/{ds}/stage1_summary/Specificity.png",ds=DATASETS),
-
+        # stage-2 metrics
+        expand("results/{ds}/stage2/metrics.tsv",                 ds=DATASETS),
+        # stage-1 summaries
+        expand("results/{ds}/stage1/summary_stage1.tsv",          ds=DATASETS),
+        # system fingerprint (one per dataset)
+        expand("results/{ds}/stage1/system_info.json",            ds=DATASETS),
+        # per-K folders with split & box plots (+ gene bars)
+        expand("figures/{ds}/stage1_k{K}",                        ds=DATASETS, K=SIG_SIZES),
+        # summary plots: accuracy
+        expand("figures/{ds}/stage1_summary/MCE.png",             ds=DATASETS),
+        expand("figures/{ds}/stage1_summary/Sensitivity.png",     ds=DATASETS),
+        expand("figures/{ds}/stage1_summary/Specificity.png",     ds=DATASETS),
+        # summary plots: runtimes
+        expand("figures/{ds}/stage1_summary/Train_time.png",      ds=DATASETS),
+        expand("figures/{ds}/stage1_summary/Pred_time.png",       ds=DATASETS),
 
 ###############################################################################
-# Stage0 – (I may need it later)
+# Stage-0  –  copy raw → processed 
 ###############################################################################
 rule copy_matrix:
     input:  "data/raw/{ds}.csv"
@@ -33,7 +40,7 @@ rule copy_matrix:
     shell:  "cp {input} {output}"
 
 ###############################################################################
-# Stage1 – variable‑K Monte‑Carlo CV
+# Stage-1  –  variable-K Monte-Carlo CV
 ###############################################################################
 rule mccv_stage1:
     input:
@@ -46,7 +53,7 @@ rule mccv_stage1:
     script: "../scripts/python/mccv_stage1.py"
 
 ###############################################################################
-# Stage2 – fixed‑signature evaluation
+# Stage-2  –  fixed-signature evaluation (uses most-frequent Kpanel)
 ###############################################################################
 rule stage2_fixed_signature:
     input:
@@ -57,13 +64,9 @@ rule stage2_fixed_signature:
     conda:  ENV_YAML
     script: "../scripts/python/stage2_eval.py"
 
-
-
-
 ###############################################################################
-# Stage – figures
+# Stage-1 visualisations (per K, per classifier)
 ###############################################################################
-# ─────────────────────────────────────────────────────────────
 rule plot_stage1:
     input:
         metrics = "results/{ds}/stage1/metrics_k{K}.tsv",
@@ -72,15 +75,12 @@ rule plot_stage1:
         directory("figures/{ds}/stage1_k{K}")
     params:
         title = lambda wc: f"{wc.ds} | K={wc.K}"
-    conda: ENV_YAML
+    conda:  ENV_YAML
     script: "../scripts/python/plots/plot_stage1.py"
 
-
-
 ###############################################################################
-# Stage 3 – aggregate mean ± SE
+# Stage-1  aggregation  (mean±SE & runtimes)
 ###############################################################################
-# ------ Stage-1 aggregation -------------
 rule aggregate_stage1:
     input:
         lambda wc: expand(
@@ -91,8 +91,9 @@ rule aggregate_stage1:
     conda:  ENV_YAML
     script: "../scripts/python/aggregate_stage1.py"
 
-
-
+###############################################################################
+# Stage-1 summary figures
+###############################################################################
 rule plot_stage1_summary:
     input:
         "results/{ds}/stage1/summary_stage1.tsv"
@@ -100,11 +101,19 @@ rule plot_stage1_summary:
         MCE         = "figures/{ds}/stage1_summary/MCE.png",
         Sensitivity = "figures/{ds}/stage1_summary/Sensitivity.png",
         Specificity = "figures/{ds}/stage1_summary/Specificity.png"
-    params:
-        title = lambda wc: wc.ds
+    params: title = lambda wc: wc.ds
     conda:  ENV_YAML
     script: "../scripts/python/plots/plot_stage1_summary.py"
 
-
-
-
+###############################################################################
+# Stage-1 runtime figures
+###############################################################################
+rule plot_stage1_runtime:
+    input:
+        "results/{ds}/stage1/summary_stage1.tsv"
+    output:
+        train = "figures/{ds}/stage1_summary/Train_time.png",
+        pred  = "figures/{ds}/stage1_summary/Pred_time.png"
+    params: title = lambda wc: wc.ds
+    conda: ENV_YAML
+    script: "../scripts/python/plots/plot_runtime.py"
