@@ -2,6 +2,8 @@ FROM condaforge/mambaforge:latest
 
 WORKDIR /omics
 
+RUN apt-get update && apt-get install -y time
+
 COPY env/environment.yml env/environment.yml
 
 RUN mamba env create -f env/environment.yml
