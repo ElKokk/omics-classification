@@ -1,95 +1,79 @@
 """
 Stage-1 – Monte-Carlo cross-validation
 =====================================
-* 100 stratified splits (2/3 train · 1/3 test)
-* limma + moderated-t ranking calculated **on the train fold**
-* keep the top-K genes, then fit two classifiers
-      - LDA
-      - DLDA  -- For python I make use of Gaussian Naïve Bayes with class-independent variances
---------------------------------------------------------------------
-Outputs
-    results/{ds}/stage1/metrics_k{K}.tsv
-    results/{ds}/stage1/freq_k{K}.csv
+(n_splits from config.yaml, no hard-coding)
 """
-# ──────────────────────────────────────────────────────────────────────────
 from pathlib import Path
-import logging, re
+import os, logging, re, time, json, platform
+import multiprocessing as mp, psutil
 import numpy as np, pandas as pd
-
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import confusion_matrix
-
 from rpy2.robjects import r, pandas2ri, packages
 pandas2ri.activate()
 
-# ────────── Snakemake I/O ─────────────────────────────────────────────────
+# ─────────── Snakemake parameters ───────────────────────────────────────────
 MATRIX_CSV  = Path(snakemake.input["matrix"])
 OUT_METRICS = Path(snakemake.output["metrics"])
 OUT_FREQ    = Path(snakemake.output["freq"])
 TOP_K       = int(snakemake.params["k"])
+N_SPLITS    = int(snakemake.params["n_splits"])
 DATASET     = MATRIX_CSV.stem.replace("_matrix", "")
 
-# ────────── logging ───────────────────────────────────────────────────────
 logging.basicConfig(format="%(levelname)s | %(message)s",
                     level=logging.INFO, force=True)
-logging.info("Stage-1  |  dataset=%s  |  K=%d", DATASET, TOP_K)
+logging.info("Stage-1 | dataset=%s | K=%d | splits=%d",
+             DATASET, TOP_K, N_SPLITS)
 
-# ────────── 1 ▸ read expression matrix ───────────────────────────────────
-def read_prostmat(fp: Path) -> pd.DataFrame:
+# ─────────── expression matrix ──────────────────────────────────────────────
+def read_matrix(fp: Path) -> pd.DataFrame:
     df = pd.read_csv(fp, header=None).drop(columns=[0])
     df.columns = df.iloc[0]
     mat = df.iloc[1:].astype(float)
     mat.index = mat.index.map(str)
     return mat
 
-expr = read_prostmat(MATRIX_CSV)
-
-# normalising the string IDs
+expr = read_matrix(MATRIX_CSV)
 expr.index = (expr.index
                 .str.lstrip("X")
                 .str.replace(r"\.0$", "", regex=True))
 expr = expr[~expr.index.duplicated(keep="first")]
-
 samples = expr.columns.astype(str)
 
-# phenotype labels ---------------------------------------------------------
 classes = np.where(
     pd.Series(samples).str.contains("cancer", case=False, na=False),
-    "Cancer",
-    "Control",
-)
+    "Cancer", "Control").astype(str)
 
-# ────────── 2 ▸ limma ───────────────────────────
+# ─────────── R-package limma ────────────────────────────────────────────────
 _ = packages.importr("limma", suppress_messages=True)
 
-# ────────── 3 ▸ helper for split-wise metrics ─────────────────────────────
 def split_metrics(y_true, y_pred):
     tn, fp, fn, tp = confusion_matrix(
         y_true, y_pred, labels=["Control", "Cancer"]).ravel()
     return dict(
         MCE         = 1 - (tp + tn) / len(y_true),
         Sensitivity = tp / (tp + fn) if tp + fn else np.nan,
-        Specificity = tn / (tn + fp) if tn + fp else np.nan,
-    )
+        Specificity = tn / (tn + fp) if tn + fp else np.nan)
 
-# ────────── 4 ▸ Monte-Carlo loop ──────────────────────────────────────────
+# ─────────── Monte-Carlo loop ───────────────────────────────────────────────
 gene_counter, rows = {}, []
-sss = StratifiedShuffleSplit(n_splits=100, test_size=0.33, random_state=42)
+sss = StratifiedShuffleSplit(n_splits=N_SPLITS, test_size=0.33, random_state=42)
+progress_step = max(1, N_SPLITS // 10)
 
 for split_no, (tr, te) in enumerate(sss.split(samples, classes), 1):
     tr_cols, te_cols = samples[tr], samples[te]
 
-    # ---- 4-a limma ranking on the current training fold ------------------
+    # limma ranking ----------------------------------------------------------
     r.assign("mat_py", pandas2ri.py2rpy(expr[tr_cols]))
     design_vec = ",".join("1" if classes[i] == "Cancer" else "0" for i in tr)
     r(f"design <- model.matrix(~ factor(c({design_vec})))")
-    r("suppressMessages(fit <- eBayes(lmFit(mat_py, design)))")
+    r("suppressMessages(suppressWarnings("
+      "fit <- eBayes(lmFit(mat_py, design))))")
 
     df_top = r(f"topTable(fit, n={TOP_K}, sort.by='t')")
     top_genes = [re.sub(r"\.0$", "", g.lstrip("X")) for g in df_top.index]
-
     for g in top_genes:
         gene_counter[g] = gene_counter.get(g, 0) + 1
 
@@ -97,29 +81,45 @@ for split_no, (tr, te) in enumerate(sss.split(samples, classes), 1):
     Xte = expr.loc[top_genes, te_cols].T.values
     ytr, yte = classes[tr], classes[te]
 
-    # ---- 4-b model zoo ----------------------------------------------------
-    MODELS = {
-        "LDA" : LinearDiscriminantAnalysis(),
-        "DLDA": GaussianNB()
-    }
+    MODELS = {"LDA": LinearDiscriminantAnalysis(),
+              "DLDA": GaussianNB()}
+    for mdl_name, clf in MODELS.items():
+        t0 = time.perf_counter(); clf.fit(Xtr, ytr)
+        train_s = time.perf_counter() - t0
+        t0 = time.perf_counter(); yhat = clf.predict(Xte)
+        pred_s  = time.perf_counter() - t0
 
-    for name, clf in MODELS.items():
-        yhat = clf.fit(Xtr, ytr).predict(Xte)
-        res  = split_metrics(yte, yhat)
-        res.update(split=split_no, model=name)
-        rows.append(res)
+        row = split_metrics(yte, yhat)
+        row.update(split=split_no, model=mdl_name,
+                   train_s=train_s, pred_s=pred_s)
+        rows.append(row)
 
-    logging.info("split %3d ▸ done", split_no)
+        logging.info("split %d/%d | K=%d | %-4s | "
+                     "train=%.3fs | pred=%.3fs",
+                     split_no, N_SPLITS, TOP_K, mdl_name, train_s, pred_s)
 
-# ────────── 5 ▸ write outputs ─────────────────────────────────────────────
+    if (split_no % progress_step == 0) or (split_no == N_SPLITS):
+        logging.info("split %d / %d finished", split_no, N_SPLITS)
+
+# ─────────── write outputs ─────────────────────────────────────────────────
 OUT_METRICS.parent.mkdir(parents=True, exist_ok=True)
 pd.DataFrame(rows).to_csv(OUT_METRICS, sep="\t", index=False)
 
 OUT_FREQ.parent.mkdir(parents=True, exist_ok=True)
-(pd.Series(gene_counter, name="count")
-   .sort_values(ascending=False)
-   .rename_axis("gene")
-   .reset_index()
+(pd.Series(gene_counter, name="count").sort_values(ascending=False)
+   .rename_axis("gene").reset_index()
    .to_csv(OUT_FREQ, index=False))
 
-logging.info("✓  Saved  %s  and  %s", OUT_METRICS, OUT_FREQ)
+# hardware fingerprint (once)
+finger_fp = OUT_METRICS.parent / "system_info.json"
+if not finger_fp.exists():
+    sjobs = os.environ.get("SNAKEMAKE_NJOBS", "")
+    info = {
+        "python_version": platform.python_version(),
+        "cpu": platform.processor() or platform.machine(),
+        "logical_cores": mp.cpu_count(),
+        "total_ram_GiB": round(psutil.virtual_memory().total / 2**30, 1),
+        "os": f"{platform.system()} {platform.release()}",
+        "snakemake_cores": int(sjobs) if sjobs.isdigit() else None
+    }
+    finger_fp.write_text(json.dumps(info, indent=2))
