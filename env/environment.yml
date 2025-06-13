@@ -16,6 +16,7 @@ dependencies:
   - seaborn
   - mlens
   - rpy2=3.5.*
+  - py-cpuinfo
 
   # R
   - bioconductor-limma
