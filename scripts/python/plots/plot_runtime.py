@@ -1,67 +1,80 @@
 """
 Runtime visualisations
-————————
-Input : summary_stage1.tsv
-Output: five PNGs (mean & total; wall-clock; cores speed-up)
+––––––––––––––––––––––
+• Train_mean / Pred_mean      – per-split averages      (model × K)
+• Train_total / Pred_total    – totals across splits    (model × K)
+• Runtime_total               – (Train+Pred) totals     (model × K)
+• Wall_clock                  – elapsed seconds per K   (single line)
+• Speed_up                    – wall-clock speed-up vs cores
 """
-from pathlib import Path, datetime
-import pandas as pd, numpy as np, seaborn as sns, matplotlib.pyplot as plt
-
+from pathlib import Path
+import numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns
 sns.set_context("paper"); sns.set_style("whitegrid")
 plt.rcParams["figure.dpi"] = 300
 
-summary_fp = Path(snakemake.input[0])
-out_train_mean = Path(snakemake.output["Train_mean"])
-out_pred_mean  = Path(snakemake.output["Pred_mean"])
-out_train_tot  = Path(snakemake.output["Train_total"])
-out_pred_tot   = Path(snakemake.output["Pred_total"])
-out_wall       = Path(snakemake.output["Wall_clock"])
-out_speedup    = Path(snakemake.output["Speed_up"])
-TITLE          = snakemake.params["title"]
+# ─────────── Snakemake I/O ────────────────────────────────────────────
+summary_fp  = Path(snakemake.input["stage1_summary"])
+cores_fp    = Path(snakemake.input["cores_table"])
+out         = snakemake.output
+TITLE       = snakemake.params["title"]
+Path(out["Train_mean"]).parent.mkdir(parents=True, exist_ok=True)
 
 df = pd.read_csv(summary_fp, sep="\t").sort_values("K")
 palette = sns.color_palette("colorblind", df["model"].nunique())
 
-# ── helper ───────────────────────────────────────────────────────────────
-def plot(df, y, ylabel, out_fp, title):
-    fig, ax = plt.subplots(figsize=(7,4))
-    for c,(mdl,sub) in zip(palette, df.groupby("model")):
-        ax.plot(sub["K"], sub[y], marker="o", label=mdl, color=c)
-    ax.set_xlabel("Top-K features")
-    ax.set_ylabel(ylabel)
-    ax.set_title(f"{title} · {ylabel} vs K")
-    ax.legend(frameon=False)
-    fig.tight_layout(); fig.savefig(out_fp); plt.close(fig)
+def line_plot(subdf, y, ylab, out_fp, multi=True):
+    fig, ax = plt.subplots(figsize=(7, 4))
+    if multi:
+        for c, (mdl, g) in zip(palette, subdf.groupby("model")):
+            ax.plot(g["K"], g[y], marker="o", label=mdl, color=c)
+    else:
+        ax.plot(subdf["K"], subdf[y], marker="o", color="grey")
+    ax.set_xlabel("Top-K features"); ax.set_ylabel(ylab)
+    ax.set_title(f"{TITLE} · {ylab} vs K")
+    if multi: ax.legend(frameon=False)
+    sns.despine(fig); fig.tight_layout(); fig.savefig(out_fp); plt.close(fig)
 
-# mean ± SE already plotted earlier; here we show means only
-plot(df, "Train_mean", "Train time (s)", out_train_mean, TITLE)
-plot(df, "Pred_mean",  "Pred time (s)",  out_pred_mean,  TITLE)
-plot(df, "Train_total","Total train time (s)", out_train_tot, TITLE)
-plot(df, "Pred_total", "Total pred time (s)",  out_pred_tot,  TITLE)
+# mean & total per model
+line_plot(df, "Train_mean",  "Train time [s]",         out["Train_mean"])
+line_plot(df, "Pred_mean",   "Predict time [s]",       out["Pred_mean"])
+line_plot(df, "Train_total", "Total train time [s]",   out["Train_total"])
+line_plot(df, "Pred_total",  "Total predict time [s]", out["Pred_total"])
 
-# ── wall-clock vs K (sum of wall_clock_k*.txt) ───────────────────────────
-wall_rows = []
-for k in df["K"].unique():
-    f = summary_fp.parent.parent / f"wall_clock_k{k}.txt"
-    secs = float(f.read_text().strip()) if f.exists() else np.nan
-    wall_rows.append({"K":k, "wall_s":secs})
-wall = pd.DataFrame(wall_rows).sort_values("K")
-plot(wall, "wall_s", "Wall-clock seconds", out_wall, TITLE)
+# combined total
+df["Runtime_total"] = df["Train_total"] + df["Pred_total"]
+line_plot(df, "Runtime_total", "Total runtime [s]", out["Runtime_total"])
 
-# ── speed-up vs cores (requires multiple pipeline runs) ──────────────────
-cores_fp = summary_fp.parent / "runtime_by_cores.tsv"
-if cores_fp.exists():
-    cdf = pd.read_csv(cores_fp, sep="\t").dropna(subset=["wall_clock_s"])
-    cdf = cdf.sort_values("cores")
-    base = cdf["wall_clock_s"].iloc[0]
-    cdf["speed_up"] = base / cdf["wall_clock_s"]
-    fig, ax = plt.subplots(figsize=(6,4))
-    ax.plot(cdf["cores"], cdf["speed_up"], marker="o")
-    ax.set_xlabel("Snakemake cores")
-    ax.set_ylabel("Speed-up")
-    ax.set_title(f"{TITLE} · wall-clock speed-up")
-    ax.grid(True, axis="y", ls="--", alpha=0.4)
-    fig.tight_layout(); fig.savefig(out_speedup); plt.close(fig)
+# wall-clock per-K
+def read_sec(fp):
+    try:
+        with open(fp) as fh:
+            next(fh); line = next(fh, "").strip()
+            return float(line.split("\t")[0]) if line else None
+    except Exception: return None
+
+wall = pd.DataFrame({"K": df["K"],
+                     "wall_s": [read_sec(summary_fp.parent /
+                                         f"wall_clock_k{k}.txt")
+                                for k in df["K"]]}).dropna()
+if not wall.empty:
+    line_plot(wall, "wall_s", "Wall-clock seconds", out["Wall_clock"], multi=False)
 else:
-    # create an empty placeholder so Snakemake is satisfied
-    Path(out_speedup).touch()
+    Path(out["Wall_clock"]).touch()
+
+# speed-up curve
+if cores_fp.exists():
+    cdf = pd.read_csv(cores_fp, sep="\t").dropna()
+    if len(cdf) >= 2:
+        base = cdf.sort_values("cores")["wall_clock_s"].iloc[0]
+        cdf["speed_up"] = base / cdf["wall_clock_s"]
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(cdf["cores"], cdf["speed_up"], marker="o")
+        ax.set_xlabel("Snakemake cores"); ax.set_ylabel("Speed-up ×")
+        ax.set_title(f"{TITLE} · wall-clock speed-up")
+        ax.grid(axis="y", ls="--", alpha=.4)
+        sns.despine(fig); fig.tight_layout(); fig.savefig(out["Speed_up"])
+        plt.close(fig)
+    else:
+        Path(out["Speed_up"]).touch()
+else:
+    Path(out["Speed_up"]).touch()
