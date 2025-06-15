@@ -82,5 +82,5 @@ for name, d in results.items():
                      Spec_mean=spe_m, Spec_se=spe_se))
 
 out_metrics.parent.mkdir(parents=True, exist_ok=True)
-pd.DataFrame(rows).to_csv(out_metrics, sep="\t", index=False) 
+pd.DataFrame(rows).to_csv(out_metrics, sep="\t", index=False)
 print(f"✓ wrote summary → {out_metrics}")
