@@ -3,5 +3,8 @@ datasets:
 
 sig_sizes: [3,5,10,20,50,75,100]
 
+n_splits: 100
+
+
 fixed_k:
   prostmat: 20
