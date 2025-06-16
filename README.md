@@ -28,5 +28,21 @@ conda activate omics-thesis
 
 To RUN THE FULL PIPELINE on Windows' Git Bash :
 
-docker run --rm -v "$(pwd -W):/omics" omics-thesis:dev --use-conda --cores 4
+
+# main pipeline  (here I am benchmarking on 4, 6 and 8 cores for runtime comparison - can be omitted)
+
+
+for C in 4 6 8
+do
+  docker run --rm -v "$(pwd -W)":/omics omics-thesis:dev \
+    bash -c "cd /omics && ./measure.sh $C"
+done
+
+
+
+# aggregate & plot the results
+
+
+docker run --rm -v "$(pwd -W)":/omics omics-thesis:dev \
+  bash -c "cd /omics && snakemake -s workflow/Snakefile --cores 1 host_analysis"
 
