@@ -17,6 +17,10 @@ dependencies:
   - mlens
   - rpy2=3.5.*
   - py-cpuinfo
+  - mlxtend
+  - mlens
+  - xgboost
+  - psutil
 
   # R
   - bioconductor-limma
@@ -29,3 +33,4 @@ dependencies:
   - pip
   - pip:
       - snakemake
+      - celer
