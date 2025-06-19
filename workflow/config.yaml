@@ -1,10 +1,6 @@
 datasets:
   - prostmat
 
-sig_sizes: [3,5,10,20,50,75,100]
+sig_sizes: [10,20,50,75]
 
-n_splits: 100
-
-
-fixed_k:
-  prostmat: 20
+n_splits: 10
