@@ -1,17 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Stage‑1 – Monte‑Carlo CV benchmark (100 splits)
+Stage‑1 – Monte‑Carlo CV benchmark
 • limma feature filter (top‑K t‑statistics)
 • model zoo
-• LASSO via celer.LogisticRegressionCV  (fast, warm‑start, multi‑core)
+• LASSO via celer.LogisticRegressionCV
 • Super‑Learner now includes                     – RF / SVM / kNN / LDA / DLDA
                                                   – Lasso_Filtered
-                                                  – Lasso_Unfiltered (NEW)
+                                                  – Lasso_Unfiltered
 • exports
     ◦ per‑split metrics
     ◦ gene‑frequencies
-    ◦ Super‑Learner weights (long table)
+    ◦ Super‑Learner weights
 """
 # ─────────────────────────────────────────────────────────────────────────────
 from pathlib import Path
@@ -26,7 +26,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.naive_bayes import GaussianNB
-from celer import LogisticRegressionCV                          # ← NEW
+from celer import LogisticRegressionCV
 from sklearn.linear_model import LogisticRegression
 from rpy2.robjects import r, pandas2ri, packages
 
@@ -90,11 +90,11 @@ svm_raw = make_pipeline(
 )
 SVM_CAL = CalibratedClassifierCV(svm_raw, cv=5, method="sigmoid")
 
-# ---------- fast L1 via celer (uses warm‑start and screening) -------------
+# ---------- fast L1 via celer  -------------
 CELER_L1 = LogisticRegressionCV(
     penalty      = "l1",
-    solver       = "celer",        # <‑‑ key difference
-    Cs           = 20,             # denser λ‑grid, still cheap
+    solver       = "celer",
+    Cs           = 20,
     cv           = 5,
     max_iter     = 5000,
     n_jobs       = 1,
@@ -112,12 +112,12 @@ MODELS_FILTERED = {
     "RF"   : RandomForestClassifier(n_estimators=500,
                                     max_features="sqrt",
                                     random_state=1, n_jobs=1),
-    "Lasso_Filtered": make_pipeline(STD, CELER_L1)  # scaling inside pipeline
+    "Lasso_Filtered": make_pipeline(STD, CELER_L1)
 }
-LASSO_UNF = make_pipeline(STD, CELER_L1)            # full matrix, same pipe
+LASSO_UNF = make_pipeline(STD, CELER_L1)
 
 # -------------------------------------------------------------------------
-# Super‑Learner : now *seven* base learners (includes unfiltered lasso)
+# Super‑Learner : *seven* base learners
 # -------------------------------------------------------------------------
 STACK_BASE = [
     ("rf",     MODELS_FILTERED["RF"]),
