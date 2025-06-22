@@ -1,155 +1,123 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-Extended runtime plots
-––––––––––––––––––––––
-Produces for every dataset
-
-• Train_mean / Pred_mean / Train_total / Pred_total / Runtime_total  (model × K)
-• Wall_clock                     – elapsed seconds vs K               (single)
-• Speed_up                       – speed-up curve vs cores            (single)
-• Wall_clock_vs_cores            – elapsed seconds vs cores           (single)
-• Train_total_vs_cores           – TOTAL train time vs cores (all K, per model)
-• Pred_total_vs_cores            – TOTAL predict time vs cores (all K, per model)
-• Train_total_vs_cores_zoom      – *raw* train totals, all K pts annotated
-• Train_total_vs_cores_fixedK    – totals vs cores **for fixed-K only**
+Runtime plots
 """
 from pathlib import Path
-import numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns, textwrap
+import numpy as np, pandas as pd, matplotlib.pyplot as plt, seaborn as sns, textwrap, sys, logging
+sns.set(context="paper", style="whitegrid")
+plt.rcParams.update({"figure.dpi":300, "savefig.bbox":"tight",
+                     "font.family":"sans-serif"})
 
-sns.set_context("paper")
-sns.set_style("whitegrid")
-plt.rcParams["figure.dpi"] = 300
+# ── helpers -----------------------------------------------------------------
+def safe_read(fp, **kw):
+    try:
+        return pd.read_csv(fp, **kw)
+    except pd.errors.EmptyDataError:
+        logging.warning("empty file skipped: %s", fp)
+        return pd.DataFrame()
 
-# ────────── Snakemake I/O ───────────────────────────────────────────
-stage1   = Path(snakemake.input.stage1_summary)
-cores_fp = Path(snakemake.input.cores_table)
-model_fp = Path(snakemake.input.model_table)
+def stub(tgt):
+    Path(tgt).parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(); plt.axis('off'); plt.savefig(tgt, dpi=72, bbox_inches='tight')
 
-out      = snakemake.output
-TITLE    = snakemake.params.title
+def stub_all(outputs):
+    for tgt in outputs:
+        stub(tgt)
+    sys.exit(0)
 
+# ── Snakemake I/O -----------------------------------------------------------
+stage1_fp = Path(snakemake.input.stage1_summary)
+cores_fp  = Path(snakemake.input.cores_table)
+model_fp  = Path(snakemake.input.model_table)
+TITLE     = snakemake.params.title
+outs      = list(snakemake.output)
 
-try:
-    FIXED_K = int(snakemake.params.fixed_k)
-except AttributeError:
-    # backward compatibility
-    import statistics
-    FIXED_K = statistics.mode(pd.read_csv(stage1, sep="\t")["K"])
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s | %(levelname)-7s | %(message)s",
+                    datefmt="%H:%M:%S")
 
+df  = safe_read(stage1_fp, sep="\t")
+cdf = safe_read(cores_fp , sep="\t")
+mdf = safe_read(model_fp , sep="\t")
 
-
-Path(out.Train_mean).parent.mkdir(parents=True, exist_ok=True)
-
-df   = pd.read_csv(stage1, sep="\t").sort_values("K")
-cdf  = pd.read_csv(cores_fp, sep="\t").sort_values("cores")
-mdf  = pd.read_csv(model_fp, sep="\t").sort_values(["model", "cores"])
+# ── abort early if nothing to plot -----------------------------------------
+if df.empty or cdf.empty or mdf.empty:
+    logging.warning("one or more runtime tables empty – generating stubs only")
+    stub_all(outs)
 
 palette = sns.color_palette("colorblind", df["model"].nunique())
-
-
-
-# ───────── 1. helper – model lines vs K ─────────
 def line_vs_k(sub, y, ylab, outfile):
-    fig, ax = plt.subplots(figsize=(7, 4))
-    for colour, (mdl, g) in zip(palette, sub.groupby("model")):
-        ax.plot(g["K"], g[y], marker="o", label=mdl, color=colour)
-    ax.set_xlabel("Top-K features")
-    ax.set_ylabel(ylab)
-    ax.set_title(f"{TITLE} · {ylab} vs K")
-    ax.legend(frameon=False)
-    sns.despine(fig)
-    fig.tight_layout()
-    fig.savefig(outfile)
-    plt.close(fig)
+    fig, ax = plt.subplots(figsize=(7,4))
+    mrg     = 0.10*(sub[y].max()-sub[y].min())
+    ax.set_ylim(max(0, sub[y].min()-mrg), sub[y].max()+mrg)
+    for col,(mdl,g) in zip(palette, sub.groupby("model")):
+        ax.plot(g["K"], g[y], marker="o", label=mdl,
+                color=col, linewidth=1.6)
+    ax.set(xlabel="Top‑K genes", ylabel=ylab,
+           title=f"{TITLE} · {ylab} vs K")
+    ax.legend(frameon=False, bbox_to_anchor=(1.02,0.5), loc="center left")
+    fig.tight_layout(rect=[0,0,0.78,1]); fig.savefig(outfile); plt.close(fig)
 
+line_vs_k(df,"Train_mean","Mean train time [s]",snakemake.output.Train_mean)
+line_vs_k(df,"Pred_mean" ,"Mean predict time [s]",snakemake.output.Pred_mean)
+line_vs_k(df,"Train_total","Total train time [s]",snakemake.output.Train_total)
+line_vs_k(df,"Pred_total" ,"Total predict time [s]",snakemake.output.Pred_total)
+df["Runtime_total"]=df["Train_total"]+df["Pred_total"]
+line_vs_k(df,"Runtime_total","Total runtime [s]",snakemake.output.Runtime_total)
 
-line_vs_k(df, "Train_mean",  "Train time [s]",           out.Train_mean)
-line_vs_k(df, "Pred_mean",   "Predict time [s]",         out.Pred_mean)
-line_vs_k(df, "Train_total", "Total train time [s]",     out.Train_total)
-line_vs_k(df, "Pred_total",  "Total predict time [s]",   out.Pred_total)
-
-df["Runtime_total"] = df["Train_total"] + df["Pred_total"]
-line_vs_k(df, "Runtime_total", "Total runtime [s]",      out.Runtime_total)
-
-
-# ───────── 2. wall-clock vs cores  + speed-up ─────────
-if len(cdf) >= 2:
-    # seconds
-    fig, ax = plt.subplots(figsize=(6, 4))
+# ----- wall‑clock & speed‑up
+if len(cdf)>=2 and {"cores","wall_clock_s"}.issubset(cdf.columns):
+    fig,ax=plt.subplots(figsize=(6,4))
     ax.plot(cdf["cores"], cdf["wall_clock_s"], marker="o")
-    ax.set_xlabel("Snakemake cores")
-    ax.set_ylabel("Wall-clock [s]")
-    ax.set_title(f"{TITLE} · wall-clock seconds")
-    ax.grid(axis="y", ls="--", alpha=.4)
-    sns.despine(fig); fig.tight_layout(); fig.savefig(out.Wall_clock_vs_cores)
-    plt.close(fig)
+    ax.set(xlabel="Snakemake cores", ylabel="Wall‑clock [s]",
+           title=f"{TITLE} · wall‑clock seconds")
+    ax.grid(axis="y",ls="--",alpha=.4); fig.tight_layout()
+    fig.savefig(snakemake.output.Wall_clock_vs_cores); plt.close(fig)
 
-    # speed-up
-    base = cdf.iloc[0]["wall_clock_s"]
-    sp   = cdf.assign(speed_up = base / cdf["wall_clock_s"])
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(sp["cores"], sp["speed_up"], marker="o")
-    ax.set_xlabel("Snakemake cores")
-    ax.set_ylabel("Speed-up ×")
-    ax.set_title(f"{TITLE} · wall-clock speed-up")
-    ax.grid(axis="y", ls="--", alpha=.4)
-    sns.despine(fig); fig.tight_layout(); fig.savefig(out.Speed_up)
-    plt.close(fig)
+    fig,ax=plt.subplots(figsize=(6,4))
+    ax.plot(cdf["cores"], cdf["wall_clock_s"].iloc[0]/cdf["wall_clock_s"],
+            marker="o")
+    ax.set(xlabel="Snakemake cores", ylabel="Speed‑up ×",
+           title=f"{TITLE} · wall‑clock speed‑up")
+    ax.grid(axis="y",ls="--",alpha=.4); fig.tight_layout()
+    fig.savefig(snakemake.output.Speed_up); plt.close(fig)
 else:
-    Path(out.Wall_clock_vs_cores).touch(); Path(out.Speed_up).touch()
+    stub(snakemake.output.Wall_clock_vs_cores)
+    stub(snakemake.output.Speed_up)
 
+# ----- totals vs cores ------------------------------
+def safe_totals(y, png):
+    if y not in mdf.columns or "cores" not in mdf.columns:
+        stub(png); return
+    agg = mdf.groupby(["model","cores"],as_index=False)[y].sum(min_count=1)
+    fig,ax=plt.subplots(figsize=(6,4))
+    for col,(mdl,g) in zip(palette, agg.groupby("model")):
+        ax.plot(g["cores"], g[y], marker="o", label=mdl, color=col)
+    ax.set(xlabel="Snakemake cores", ylabel=y.replace("_"," "),
+           title=f"{TITLE} · {y.replace('_',' ')}")
+    ax.legend(frameon=False,bbox_to_anchor=(1.02,0.5),loc="center left")
+    fig.tight_layout(rect=[0,0,0.78,1]); fig.savefig(png); plt.close(fig)
 
-# ───────── 3. helper – TOTALS vs cores  ─────────
-def totals_per_model(sub, y, ylab, outfile):
-    agg = (sub.groupby(["model", "cores"], as_index=False)[y]
-             .sum(min_count=1))         # total across all K
+safe_totals("Train_total", snakemake.output.Train_total_vs_cores)
+safe_totals("Pred_total" , snakemake.output.Pred_total_vs_cores)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    for colour, (mdl, g) in zip(palette, agg.groupby("model")):
-        ax.plot(g["cores"], g[y], marker="o", label=mdl, color=colour)
+# ----- zoomed scatter --------------------------------------------------------
+def safe_zoom(y, png):
+    if y not in mdf.columns or "cores" not in mdf.columns:
+        stub(png); return
+    fig,ax=plt.subplots(figsize=(6,4))
+    jit={c:j for c,j in zip(sorted(mdf["cores"].unique()),
+                            np.linspace(-.15,.15,len(mdf["cores"].unique())))}
+    for col,(mdl,g) in zip(palette, mdf.groupby("model")):
+        for _,r in g.iterrows():
+            x=r["cores"]+jit[r["cores"]]
+            ax.scatter(x,r[y],color=col,s=40,zorder=3)
+            ax.text(x,r[y],f"K={r['K']}",fontsize=7,ha="center",va="bottom",
+                    color=col)
+        ax.plot(g["cores"],g[y],ls="--",lw=.7,color=col,alpha=.4)
+    ax.set(xlabel="Snakemake cores", ylabel=y.replace("_"," "),
+           title=textwrap.fill(f"{TITLE} · {y.replace('_',' ')} (all K points)",60))
+    fig.tight_layout(); fig.savefig(png); plt.close(fig)
 
-    ax.set_xlabel("Snakemake cores")
-    ax.set_ylabel(ylab)
-    ax.set_title(f"{TITLE} · {ylab}")
-    ax.legend(frameon=False)
-    sns.despine(fig); fig.tight_layout(); fig.savefig(outfile); plt.close(fig)
-
-
-totals_per_model(mdf, "Train_total", "Total train time [s]",
-                 out.Train_total_vs_cores)
-totals_per_model(mdf, "Pred_total",  "Total predict time [s]",
-                 out.Pred_total_vs_cores)
-
-
-# ───────── 4. all Ks-per-model-per-core plot – every K point annotated ─────────
-def zoom_plot(sub, y, ylab, outfile):
-    fig, ax = plt.subplots(figsize=(6, 4))
-    x_jitter = {4: -0.12, 6: 0, 8: +0.12}
-
-    for colour, (mdl, g) in zip(palette, sub.groupby("model")):
-        for _, row in g.iterrows():
-            x = row["cores"] + x_jitter.get(row["cores"], 0)
-            ax.scatter(x, row[y], color=colour, s=35, zorder=3)
-            ax.text(x, row[y], f"K={row['K']}", fontsize=7,
-                    ha="center", va="bottom", color=colour)
-
-        for K, cg in g.groupby("K"):
-            ax.plot(cg["cores"], cg[y], ls="--", lw=0.7, color=colour, alpha=.5)
-
-    ax.set_xlabel("Snakemake cores")
-    ax.set_ylabel(ylab)
-    ax.set_title(textwrap.fill(f"{TITLE} · {ylab} (all K annotated)", 60))
-    sns.despine(fig); fig.tight_layout(); fig.savefig(outfile); plt.close(fig)
-
-
-zoom_plot(mdf, "Train_total", "Total train time [s]",
-          out.Train_total_vs_cores_zoom)
-
-
-# ───────── 5. fixed-K only (Stage-2 panel) ─────────
-fixed = mdf[mdf["K"] == FIXED_K]
-if not fixed.empty:
-    totals_per_model(fixed, "Train_total",
-                     f"Total train time [s]  (K={FIXED_K})",
-                     out.Train_total_vs_cores_fixedK)
-else:
-    Path(out.Train_total_vs_cores_fixedK).touch()
+safe_zoom("Train_total", snakemake.output.Train_total_vs_cores_zoom)
