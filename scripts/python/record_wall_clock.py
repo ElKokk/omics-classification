@@ -1,23 +1,32 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Collect the *max* wall‑clock across all K for **one** run_cores value
-and write a tiny TSV with header:  cores  wall_clock_s
+Write results/<ds>/runtime/wall_clock_<CORES>.tsv
+  cores  wall_clock_s
 """
-import pathlib, sys
+from pathlib import Path
+import pandas as pd, re, statistics
 
-out_fp  = pathlib.Path(snakemake.output[0])
-run_cores = int(snakemake.params["run_cores"])
-src_fps   = snakemake.input
+out_fp   = Path(snakemake.output[0])
+cores    = int(snakemake.params["run_cores"])
+pattern  = re.compile(r"wall_clock_k\d+\.txt$")
 
-secs = []
-for fp in src_fps:
-    with open(fp) as fh:
-        next(fh, None)
-        row = next(fh, "0\t0").split("\t")[0]
-        secs.append(float(row))
+totals = []
 
+for fp in snakemake.input:
+    if fp.endswith(".tsv"):
+        df = pd.read_csv(fp, sep="\t")
+        if {"Train_total", "Pred_total"}.issubset(df.columns):
+            totals.append(df["Train_total"].iloc[0] + df["Pred_total"].iloc[0])
+    elif pattern.search(fp):
+        try:
+            with open(fp) as fh:
+                secs = float(fh.readline().strip().split()[0])
+                totals.append(secs)
+        except Exception:
+            pass
+
+wall = max(totals) if totals else 0.0
 out_fp.parent.mkdir(parents=True, exist_ok=True)
-with open(out_fp, "w") as fh:
-    fh.write("cores\twall_clock_s\n")
-    fh.write(f"{run_cores}\t{max(secs):.3f}\n")
+pd.DataFrame({"cores":[cores], "wall_clock_s":[wall]}).to_csv(out_fp, sep="\t", index=False)
+print(f"[record_wall_clock] cores={cores}  wall_clock={wall:.3f}s  → {out_fp}")

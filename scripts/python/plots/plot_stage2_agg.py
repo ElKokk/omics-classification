@@ -55,7 +55,7 @@ fig.tight_layout()
 fig.savefig(out_dir / "gene_frequency.png")
 plt.close(fig)
 
-# ────────── harmonise metric column names ─────────────────────────────────
+# ────────── metric column names ─────────────────────────────────
 rename_map = {}
 for c in metrics.columns:
     low = c.lower()

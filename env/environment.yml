@@ -21,6 +21,7 @@ dependencies:
   - mlens
   - xgboost
   - psutil
+  - celer
 
   # R
   - bioconductor-limma
@@ -33,4 +34,5 @@ dependencies:
   - pip
   - pip:
       - snakemake
+      - python-git-info
       - celer

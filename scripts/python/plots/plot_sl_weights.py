@@ -3,7 +3,7 @@
 """
 Heat‑map of mean Super‑Learner weights
 rows  = base‑learner
-cols  = K (signature size)
+cols  = K
 """
 from pathlib import Path
 import pandas as pd

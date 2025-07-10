@@ -1,6 +1,0 @@
-datasets:
-  - prostmat
-
-sig_sizes: [10,20,50,75]
-
-n_splits: 10

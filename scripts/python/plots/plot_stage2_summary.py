@@ -5,7 +5,7 @@ Stage‑2 · summary line‑plots  one line per model, metric vs K
 
 mirror the Stage‑1 summary figure:
     – X‑axis = signature size
-    – One PNG per metric (MCE, Sensitivity, Specificity)
+    – One PNG per metric
 """
 from pathlib import Path
 import pandas as pd

@@ -10,3 +10,4 @@ data/raw/
 .ipynb_checkpoints/
 __pycache__/
 .env
+.snakemake/

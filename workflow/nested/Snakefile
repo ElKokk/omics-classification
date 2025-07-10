@@ -1,0 +1,407 @@
+###############################################################################
+#  Nested Monte‑Carlo CV workflow                                             #
+###############################################################################
+import os, sys
+ENV_YAML  = os.path.join(os.getcwd(), "env", "environment.yml")
+configfile: "workflow/nested/config_nested.yaml"
+
+# allow “import helpers” from workflow/nested
+sys.path.insert(0, os.path.join(os.getcwd(), "workflow", "nested"))
+
+# ───────────────────────────── constants ────────────────────────────────────
+DATASETS    = config["datasets"]
+SIG_SIZES   = config["sig_sizes"]
+M_OUTER     = int(config.get("M_outer", 20))
+M_INNER     = int(config.get("m_inner", 10))
+TEST_FRAC   = float(config.get("test_frac", .33))
+BENCH_CORES = config.get("bench_cores", [])
+
+# ───────────────────────── helper functions ─────────────────────────────────
+def outer_metric_files(ds, k):
+    return [f"results/{ds}/outer{O}/stage2/metrics_k{k}.tsv"
+            for O in range(M_OUTER)]
+
+def outer_freq_files(ds, k):
+    return [f"results/{ds}/outer{O}/stage1/freq_k{k}.csv"
+            for O in range(M_OUTER)]
+
+def outer_sl_weight_files(ds, k, tier):
+    tmpl = ("results/{ds}/outer{O}/stage1/sl_weights_k{K}.tsv"
+            if tier == "inner"
+            else "results/{ds}/outer{O}/stage2/sl_weights_k{K}.tsv")
+    return [tmpl.format(ds=ds, O=O, K=k) for O in range(M_OUTER)]
+
+# ─────────────────────── default target list ────────────────────────────────
+def _all_outputs(wc):
+    lst = []
+    for ds in DATASETS:
+        # raw outer artefacts
+        for O in range(M_OUTER):
+            for K in SIG_SIZES:
+                lst += [
+                    f"results/{ds}/outer{O}/stage2/metrics_k{K}.tsv",
+                    f"results/{ds}/outer{O}/stage1/freq_k{K}.csv",
+                    f"results/{ds}/outer{O}/stage1/sl_weights_k{K}.tsv",
+                    f"results/{ds}/outer{O}/stage2/sl_weights_k{K}.tsv",
+                ]
+
+        # nested & inner tables
+        lst += [f"results/{ds}/nested/metrics_k{K}.tsv" for K in SIG_SIZES]
+        lst += [f"results/{ds}/nested/freq_k{K}.csv"    for K in SIG_SIZES]
+        lst += [f"results/{ds}/nested/inner_avg_metrics_k{K}.tsv"
+                for K in SIG_SIZES]
+        lst += [
+            f"results/{ds}/nested/sl_weights_mean.tsv",
+            f"results/{ds}/nested_summary.tsv",
+            f"results/{ds}/nested/inner_summary.tsv",
+        ]
+
+        # SL pick TSVs
+        for f in ["in_picked","in_top","out_picked","out_top"]:
+            lst.append(f"results/{ds}/nested/sl_pickstats/{f}.tsv")
+
+        # figures
+        lst += [f"figures/{ds}/nested_k{K}" for K in SIG_SIZES]
+        for O in range(M_OUTER):
+            for K in SIG_SIZES:
+                lst.append(f"figures/{ds}/outer{O}/k{K}")
+        lst += [f"figures/{ds}/nested_summary/{m}.png"
+                for m in ["MCE","Sensitivity","Specificity",
+                          "SL_weights","SL_weight_heatmap"]]
+        lst += [f"figures/{ds}/inner_summary/{m}.png"
+                for m in ["MCE","Sensitivity","Specificity"]]
+        lst += [
+            f"figures/{ds}/sl_picked_inner.png",
+            f"figures/{ds}/sl_top_inner.png",
+            f"figures/{ds}/sl_picked_outer.png",
+            f"figures/{ds}/sl_top_outer.png",
+        ]
+        for m in ["MCE","Sensitivity","Specificity"]:
+            lst += [
+                f"figures/{ds}/inner_box_{m}.png",
+                f"figures/{ds}/outer_box_{m}.png",
+            ]
+
+        # runtime
+        lst += [
+            f"results/{ds}/runtime/model_runtimes.tsv",
+            f"results/{ds}/runtime_summary.tsv",
+        ]
+        if BENCH_CORES:
+            lst.append(f"results/{ds}/runtime/merged_wall_clock.tsv")
+            plots = [
+                "Train_mean","Pred_mean","Train_total","Pred_total",
+                "Runtime_total","Wall_clock_vs_cores","Speed_up",
+                "Train_total_vs_cores","Pred_total_vs_cores",
+                "Train_total_vs_cores_zoom",
+            ]
+            lst += [f"figures/{ds}/runtime/{p}.png" for p in plots]
+    return lst
+
+rule all:
+    input: _all_outputs
+
+###############################################################################
+# 1  copy raw → processed
+###############################################################################
+rule copy_matrix:
+    input:  "data/raw/{ds}.csv"
+    output: "data/processed/{ds}_matrix.csv"
+    conda:  ENV_YAML
+    shell:  "cp {input} {output}"
+
+###############################################################################
+# 2  outer split
+###############################################################################
+rule outer_split:
+    input:  matrix="data/processed/{ds}_matrix.csv"
+    output:
+        train_ids="results/{ds}/outer{O}/train_samples.txt",
+        test_ids ="results/{ds}/outer{O}/test_samples.txt"
+    params: O="{O}", test_frac=TEST_FRAC
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/outer_split.py"
+
+###############################################################################
+# 3  inner stage‑1
+###############################################################################
+rule inner_mccv_stage1:
+    input:
+        matrix   ="data/processed/{ds}_matrix.csv",
+        train_ids="results/{ds}/outer{O}/train_samples.txt"
+    output:
+        metrics ="results/{ds}/outer{O}/stage1/metrics_k{K}.tsv",
+        freq    ="results/{ds}/outer{O}/stage1/freq_k{K}.csv",
+        sl_wts  ="results/{ds}/outer{O}/stage1/sl_weights_k{K}.tsv"
+    params: K="{K}", m_inner=M_INNER, O="{O}"
+    benchmark: "results/{ds}/outer{O}/stage1/wall_clock_k{K}.txt"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/inner_mccv_stage1.py"
+
+rule freeze_outer_panel:
+    input:  "results/{ds}/outer{O}/stage1/freq_k{K}.csv"
+    output:
+        panel  ="results/{ds}/outer{O}/stage1/panel_k{K}_genes.txt",
+        counts ="results/{ds}/outer{O}/stage1/panel_k{K}_counts.txt"
+    params: k="{K}"
+    conda:  ENV_YAML
+    script: "../../scripts/python/freeze_gene_panel.py"
+
+###############################################################################
+# 4  outer stage‑2
+###############################################################################
+rule outer_stage2_eval:
+    input:
+        matrix    ="data/processed/{ds}_matrix.csv",
+        panel     ="results/{ds}/outer{O}/stage1/panel_k{K}_genes.txt",
+        train_ids ="results/{ds}/outer{O}/train_samples.txt",
+        test_ids  ="results/{ds}/outer{O}/test_samples.txt"
+    output:
+        metrics ="results/{ds}/outer{O}/stage2/metrics_k{K}.tsv",
+        sl_wts  ="results/{ds}/outer{O}/stage2/sl_weights_k{K}.tsv"
+    params: K="{K}", O="{O}"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/outer_stage2_eval.py"
+
+###############################################################################
+# 5  per‑outer diagnostics
+###############################################################################
+rule plot_per_outer:
+    input:
+        metrics="results/{ds}/outer{O}/stage2/metrics_k{K}.tsv",
+        freq   ="results/{ds}/outer{O}/stage1/freq_k{K}.csv"
+    output: directory("figures/{ds}/outer{O}/k{K}")
+    params: title=lambda wc: f"{wc.ds} | outer {wc.O} | K={wc.K}"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_stage1.py"
+
+###############################################################################
+# 6  aggregate OUTER‑level results
+###############################################################################
+rule combine_outer_metrics_k:
+    input: lambda wc: outer_metric_files(wc.ds, wc.K)
+    output: "results/{ds}/nested/metrics_k{K}.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/combine_outer_kmetrics.py"
+
+rule combine_outer_freq_k:
+    input: lambda wc: outer_freq_files(wc.ds, wc.K)
+    output: "results/{ds}/nested/freq_k{K}.csv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/combine_outer_freq_k.py"
+
+###############################################################################
+# 7  inner GRAND averages (one row per learner per outer fold)
+###############################################################################
+rule inner_avg_metrics_k:
+    input:
+        lambda wc: [f"results/{wc.ds}/outer{O}/stage1/metrics_k{wc.K}.tsv"
+                    for O in range(M_OUTER)]
+    output: "results/{ds}/nested/inner_avg_metrics_k{K}.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/aggregate_inner_avg_k.py"
+
+###############################################################################
+# 8  nested & inner summaries
+###############################################################################
+rule nested_summary:
+    input:
+        lambda wc: [f for K in SIG_SIZES for f in outer_metric_files(wc.ds, K)]
+    output: "results/{ds}/nested_summary.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/aggregate_nested.py"
+
+rule inner_metrics_summary:
+    input:
+        lambda wc: [f"results/{wc.ds}/nested/inner_avg_metrics_k{K}.tsv"
+                    for K in SIG_SIZES]
+    output: "results/{ds}/nested/inner_summary.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/aggregate_inner_summary.py"
+
+rule aggregate_sl_weights_nested:
+    input:
+        lambda wc: [f for K in SIG_SIZES
+                    for f in outer_sl_weight_files(wc.ds, K, "outer")]
+    output: "results/{ds}/nested/sl_weights_mean.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/aggregate_sl_weights_nested.py"
+
+###############################################################################
+# 9  figures – nested dashboards & summaries
+###############################################################################
+rule plot_nested_per_k:
+    input:
+        metrics="results/{ds}/nested/metrics_k{K}.tsv",
+        freq   ="results/{ds}/nested/freq_k{K}.csv"
+    output: directory("figures/{ds}/nested_k{K}")
+    params: title=lambda wc: f"{wc.ds} | K={wc.K} (nested)"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_stage1.py"
+
+rule plot_nested_summary:
+    input:
+        summary="results/{ds}/nested_summary.tsv",
+        slwts  ="results/{ds}/nested/sl_weights_mean.tsv"
+    output:
+        MCE         ="figures/{ds}/nested_summary/MCE.png",
+        Sensitivity ="figures/{ds}/nested_summary/Sensitivity.png",
+        Specificity ="figures/{ds}/nested_summary/Specificity.png"
+    params: title=lambda wc: f"{wc.ds} (outer TEST – frozen panel)"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/plot_nested_summary.py"
+
+rule plot_inner_summary:
+    input: "results/{ds}/nested/inner_summary.tsv"
+    output:
+        MCE         ="figures/{ds}/inner_summary/MCE.png",
+        Sensitivity ="figures/{ds}/inner_summary/Sensitivity.png",
+        Specificity ="figures/{ds}/inner_summary/Specificity.png"
+    params: title=lambda wc: f"{wc.ds} (inner GRAND averages)"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_stage1_summary.py"
+
+rule plot_sl_weights_nested:
+    input: "results/{ds}/nested/sl_weights_mean.tsv"
+    output: "figures/{ds}/nested_summary/SL_weights.png"
+    params: title=lambda wc: f"{wc.ds} (outer TEST – frozen panel)"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_sl_weights.py"
+
+rule plot_sl_weight_heatmap:
+    input: "results/{ds}/nested/sl_weights_mean.tsv"
+    output: "figures/{ds}/nested_summary/SL_weight_heatmap.png"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_sl_weight_heatmap.py"
+
+###############################################################################
+# 10  SuperLearner pick statistics
+###############################################################################
+def _sl_tbl_list(ds, tier):
+    files = []
+    for K in SIG_SIZES:
+        files.extend(outer_sl_weight_files(ds, K, tier))
+    return files
+
+rule aggregate_sl_pickstats_inner:
+    input: lambda wc: _sl_tbl_list(wc.ds, "inner")
+    output:
+        picked ="results/{ds}/nested/sl_pickstats/in_picked.tsv",
+        top    ="results/{ds}/nested/sl_pickstats/in_top.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/aggregate_sl_pick_stats.py"
+
+rule plot_sl_pickstats_inner:
+    input:
+        picked ="results/{ds}/nested/sl_pickstats/in_picked.tsv",
+        top    ="results/{ds}/nested/sl_pickstats/in_top.tsv"
+    output:
+        picked_plot = "figures/{ds}/sl_picked_inner.png",
+        top_plot    = "figures/{ds}/sl_top_inner.png"
+    params: tier="inner"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_sl_pick_counts.py"
+
+rule aggregate_sl_pickstats_outer:
+    input: lambda wc: _sl_tbl_list(wc.ds, "outer")
+    output:
+        picked ="results/{ds}/nested/sl_pickstats/out_picked.tsv",
+        top    ="results/{ds}/nested/sl_pickstats/out_top.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/nested/aggregate_sl_pick_stats.py"
+
+rule plot_sl_pickstats_outer:
+    input:
+        picked ="results/{ds}/nested/sl_pickstats/out_picked.tsv",
+        top    ="results/{ds}/nested/sl_pickstats/out_top.tsv"
+    output:
+        picked_plot = "figures/{ds}/sl_picked_outer.png",
+        top_plot    = "figures/{ds}/sl_top_outer.png"
+    params: tier="outer"
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_sl_pick_counts.py"
+
+###############################################################################
+# 11  box‑plots
+###############################################################################
+rule boxplot_inner:
+    input:
+        lambda wc: [f"results/{wc.ds}/nested/inner_avg_metrics_k{K}.tsv"
+                    for K in SIG_SIZES]
+    output:
+        MCE         ="figures/{ds}/inner_box_MCE.png",
+        Sensitivity ="figures/{ds}/inner_box_Sensitivity.png",
+        Specificity ="figures/{ds}/inner_box_Specificity.png"
+    params:
+        tier="inner",
+        title_base=lambda wc: (
+            f"{wc.ds} | INNER (distribution of {M_OUTER} outer‑fold means "
+            f"— each mean of {M_INNER} limma MCCV splits)")
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_metrics_box.py"
+
+rule boxplot_outer:
+    input:
+        lambda wc: [f"results/{wc.ds}/nested/metrics_k{K}.tsv"
+                    for K in SIG_SIZES]
+    output:
+        MCE         ="figures/{ds}/outer_box_MCE.png",
+        Sensitivity ="figures/{ds}/outer_box_Sensitivity.png",
+        Specificity ="figures/{ds}/outer_box_Specificity.png"
+    params:
+        tier="outer",
+        title_base=lambda wc: (
+            f"{wc.ds} | OUTER (distribution of {M_OUTER} frozen‑panel splits)")
+    conda:  ENV_YAML
+    script: "../../scripts/python/plots/plot_metrics_box.py"
+
+###############################################################################
+# 12  runtime rules (record, merge, plot)  – unchanged from earlier versions
+###############################################################################
+rule record_wall_clock:
+    input:
+        lambda wc: [f for K in SIG_SIZES for f in outer_metric_files(wc.ds, K)]
+    output: "results/{ds}/runtime/model_runtimes.tsv"
+    params: run_cores=lambda wc: config.get("run_cores", 1)
+    conda:  ENV_YAML
+    script: "../../scripts/python/record_wall_clock.py"
+
+if BENCH_CORES:
+    rule merge_wall_clocks:
+        input:
+            lambda wc: [f"results/{wc.ds}/runtime/wall_clock_{c}.tsv"
+                        for c in BENCH_CORES]
+        output: "results/{ds}/runtime/merged_wall_clock.tsv"
+        conda:  ENV_YAML
+        script: "../../scripts/python/merge_wall_clocks.py"
+
+    rule plot_runtime:
+        input:
+            stage1_summary="results/{ds}/runtime/model_runtimes.tsv",
+            cores_table   ="results/{ds}/runtime/merged_wall_clock.tsv",
+            model_table   ="results/{ds}/runtime/model_runtimes.tsv"
+        output:
+            Train_mean               ="figures/{ds}/runtime/Train_mean.png",
+            Pred_mean                ="figures/{ds}/runtime/Pred_mean.png",
+            Train_total              ="figures/{ds}/runtime/Train_total.png",
+            Pred_total               ="figures/{ds}/runtime/Pred_total.png",
+            Runtime_total            ="figures/{ds}/runtime/Runtime_total.png",
+            Wall_clock_vs_cores      ="figures/{ds}/runtime/Wall_clock_vs_cores.png",
+            Speed_up                 ="figures/{ds}/runtime/Speed_up.png",
+            Train_total_vs_cores     ="figures/{ds}/runtime/Train_total_vs_cores.png",
+            Pred_total_vs_cores      ="figures/{ds}/runtime/Pred_total_vs_cores.png",
+            Train_total_vs_cores_zoom="figures/{ds}/runtime/Train_total_vs_cores_zoom.png"
+        params: title=lambda wc: f"{wc.ds} nested MCCV"
+        conda:  ENV_YAML
+        script: "../../scripts/python/plots/plot_runtime.py"
+
+###############################################################################
+# 13  host runtime summary
+###############################################################################
+rule host_runtime_summary:
+    input:
+        lambda wc: [f"results/{wc.ds}/outer{O}/stage1/wall_clock_k{K}.txt"
+                    for O in range(M_OUTER) for K in SIG_SIZES]
+    output: "results/{ds}/runtime_summary.tsv"
+    conda:  ENV_YAML
+    script: "../../scripts/python/aggregate_runtime.py"

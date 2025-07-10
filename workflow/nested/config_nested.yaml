@@ -1,0 +1,14 @@
+# number of outer and inner repeats
+M_outer: 1
+m_inner: 1
+
+datasets:
+  - prostmat
+
+sig_sizes: [3,5]
+
+# Monte‑Carlo test size inside every split
+test_frac: 0.2
+
+
+bench_cores: []
