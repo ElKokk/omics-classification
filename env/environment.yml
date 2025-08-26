@@ -17,10 +17,12 @@ dependencies:
   - mlens
   - rpy2=3.5.*
   - py-cpuinfo
+  - imbalanced-learn
   - mlxtend
   - mlens
   - xgboost
   - psutil
+  - openpyxl
 
   # R
   - bioconductor-limma

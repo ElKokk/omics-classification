@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Aggregate Stage‑2  metrics_k*.tsv  →  summary_stage2.tsv
 

@@ -3,6 +3,8 @@
 """
 Stage‑2 · single‑K figures one directory per K
 """
+import matplotlib
+matplotlib.use("Agg")
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -14,7 +16,12 @@ sns.set_style("whitegrid")
 plt.rcParams.update({
     "figure.dpi": 300,
     "savefig.bbox": "tight",
-    "font.family": "sans-serif"
+    "font.family": "sans-serif",
+    "axes.labelsize": 14,
+    "axes.titlesize": 16,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 12
 })
 
 palette_metrics = sns.color_palette("colorblind", 3)
@@ -53,8 +60,8 @@ def gene_frequency_bar(df, top_n: int = 30) -> None:
 def per_split_lines(sub: pd.DataFrame, model: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
     for met, ls, col in zip(metric_order, ["-", "--", ":"], palette_metrics):
-        ax.plot(sub["split"], sub[met], ls, marker=".",
-                color=col, label=met, linewidth=1.4)
+        ax.plot(sub["split"], sub[met], ls,
+                marker=".", color=col, label=met, linewidth=1.4)
     ax.set_ylim(0, 1.05)
     ax.set_xlabel("Monte‑Carlo split")
     ax.set_ylabel("Score")

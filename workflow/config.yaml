@@ -1,6 +1,14 @@
 datasets:
+  - CRC_microbiome
   - prostmat
+  - AGEDE3_labeled
+  - golub
 
-sig_sizes: [10,20,50,75]
+sig_sizes: [3,5,10, 25, 50, 75, 100] 
 
-n_splits: 10
+n_splits: 100
+n_splits_stage2: 100
+
+
+num_stability_reps: 100
+stability_reps_enabled: true

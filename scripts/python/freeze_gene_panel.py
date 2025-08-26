@@ -25,7 +25,7 @@ tbl = (pd.read_csv(freq_csv)
 out_txt.parent.mkdir(parents=True, exist_ok=True)
 tbl["gene"].to_csv(out_txt, index=False, header=False)
 
-# ---- NEW: keep counts alongside genes --------------------------------------
+# ----keep counts alongside genes --------------------------------------
 counts_txt = out_txt.with_name(out_txt.stem + "_counts.txt")
 tbl.to_csv(counts_txt, sep="\t", index=False, header=False)
 

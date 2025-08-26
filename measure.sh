@@ -1,32 +1,56 @@
 #!/usr/bin/env bash
+# measure.sh  <DATASET>  <CORES>...
+# ------------------------------------------------------------------
+# Example:
+#   bash workflow/measure.sh CRC_microbiome 1 4 16 32 96
+#
+# What it does:
+#   1) For each <CORES>, run Stage‑1 to produce per-core runtime tables
+#      and record wall-clock seconds.
+#   2) Merge per-core tables and render ALL runtime plots into Figures/.
+
 set -euo pipefail
-if [ "$#" -lt 1 ]; then
-  echo "Usage: $0 <NUM_CORES> [<NUM_CORES> ...]" >&2; exit 1
+
+if [ "$#" -lt 2 ]; then
+  echo "Usage: $0 <DATASET> <CORES> ..." >&2
+  exit 1
 fi
-SNK="$(conda run -n omics-thesis which snakemake)"
-$SNK -s workflow/Snakefile --unlock --cores 1 --quiet || true
 
+DS="$1"; shift
+ENV=/content/mambaforge/envs/omics-thesis
+SNAKEMAKE="micromamba run --prefix $ENV snakemake"
+CFG=workflow/config.yaml
+SF=workflow/Snakefile
+
+# 1) build per-core stage1 summary
 for CORES in "$@"; do
-  OUT="results/prostmat/stage1/wall_clock_${CORES}.tsv"
-  mkdir -p "$(dirname "$OUT")"
-  echo "[measure] running CORES=${CORES}"; rm -f "${OUT}.tmp"
+  echo "[measure] ⇒ dataset=${DS}  cores=${CORES}"
 
-  set +e
-  /usr/bin/time -f "%e" -o "${OUT}.tmp" \
-    "$SNK" -s workflow/Snakefile \
-      --cores "${CORES}" --use-conda \
-      --config run_cores="${CORES}" \
-      --rerun-incomplete \
-      --forcerun mccv_stage1 aggregate_stage1 record_wall_clock \
-      --quiet
-  rc=$?
-  set -e
-  if [ $rc -ne 0 ]; then
-    echo "[measure] ERROR: snakemake failed for CORES=${CORES}" >&2
-    exit 1
-  fi
+  /usr/bin/time -f "%e" -o wall.tmp \
+    $SNAKEMAKE \
+      -s "$SF" --configfile "$CFG" \
+      --cores "$CORES" \
+      "results/${DS}/stage1/cores${CORES}/stage1_summary.tsv"
 
-  printf "cores\twall_clock_s\n%d\t%.3f\n" "${CORES}" "$(cat "${OUT}.tmp")" > "${OUT}"
-  rm "${OUT}.tmp"
-  echo "[measure] cores=${CORES}  wall_clock=$(cut -f2 "${OUT}")"
+  WALL=$(cat wall.tmp); rm wall.tmp
+  mkdir -p "results/${DS}/stage1"
+  printf "cores\twall_clock_s\n%d\t%s\n" "$CORES" "$WALL" \
+    > "results/${DS}/stage1/wall_clock_${CORES}.tsv"
+  echo "[measure]  ${CORES} cores  →  ${WALL}s"
 done
+
+# 2) aggregate across cores
+$SNAKEMAKE \
+  -s "$SF" --configfile "$CFG" --cores 1 \
+  "results/${DS}/stage1/wall_clock_all.tsv" \
+  "results/${DS}/stage1/model_runtime_vs_cores.tsv" \
+  "Figures/${DS}/runtime/Train_mean_vs_K.png" \
+  "Figures/${DS}/runtime/Pred_mean_vs_K.png" \
+  "Figures/${DS}/runtime/Train_total_vs_K.png" \
+  "Figures/${DS}/runtime/Pred_total_vs_K.png" \
+  "Figures/${DS}/runtime/Runtime_total_vs_K.png" \
+  "Figures/${DS}/runtime/Wall_clock_vs_cores.png" \
+  "Figures/${DS}/runtime/Speed_up.png" \
+  "Figures/${DS}/runtime/Train_total_vs_cores.png" \
+  "Figures/${DS}/runtime/Pred_total_vs_cores.png" \
+  "Figures/${DS}/runtime/Train_total_vs_cores_zoom.png"

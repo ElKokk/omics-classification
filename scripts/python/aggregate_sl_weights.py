@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Compute the average Super‑Learner weight per base‑learner and per K.
 
@@ -34,7 +33,6 @@ for fp in snakemake.input:
 
     df = pd.read_csv(fp, sep="\t")
 
-    # ── detect layout ───────────────────────────────────────────────────────
     if {"model", "weight"}.issubset(df.columns):
         long_df = df[["model", "weight"]]
     elif {"base", "weight"}.issubset(df.columns):
@@ -52,7 +50,7 @@ for fp in snakemake.input:
                       .assign(K=K))
     frames.append(long_df)
 
-# ── combine and write ────────────────────────────────────────────────────────
+
 (pd.concat(frames)
      .pivot(index="model", columns="K", values="weight")
      .sort_index()

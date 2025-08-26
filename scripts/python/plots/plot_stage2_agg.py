@@ -7,13 +7,15 @@ Creates in  figures/<ds>/stage2_k<K>/ :
     gene_frequency.png
     barplot_metrics.png
 """
+import matplotlib
+matplotlib.use("Agg")
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import textwrap
 
-# ────────── style ──────────────────────────────────────────────────────────
+
 sns.set_context("paper")
 sns.set_style("whitegrid")
 plt.rcParams.update({
@@ -22,7 +24,6 @@ plt.rcParams.update({
     "font.family": "sans-serif"
 })
 
-# ────────── input / output ─────────────────────────────────────────────────
 fp_metrics = Path(snakemake.input["metrics"])
 fp_freq    = Path(snakemake.input["freq"])
 TITLE      = snakemake.params["title"]
@@ -55,7 +56,7 @@ fig.tight_layout()
 fig.savefig(out_dir / "gene_frequency.png")
 plt.close(fig)
 
-# ────────── harmonise metric column names ─────────────────────────────────
+
 rename_map = {}
 for c in metrics.columns:
     low = c.lower()
@@ -74,7 +75,7 @@ if not present:
     (out_dir / "barplot_metrics.png").touch()
     raise SystemExit(0)
 
-# ────────── long‑format table & barplot ───────────────────────────────────
+
 long = metrics.melt(id_vars=["model"],
                     value_vars=present,
                     var_name="Metric",

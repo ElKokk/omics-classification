@@ -6,6 +6,8 @@ Stage‑1 · single‑K figures (one directory per K)
 ► per‑split line plot
 ► distribution boxplot
 """
+import matplotlib
+matplotlib.use("Agg")
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt

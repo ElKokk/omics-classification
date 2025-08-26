@@ -1,5 +1,5 @@
 """
-Aggregate per‑split TSVs  → one row per (model, K)  + SE + totals.
+Aggregate per‑split TSVs
 """
 from pathlib import Path
 import pandas as pd, numpy as np, re, sys, os, shutil
