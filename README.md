@@ -1,6 +1,11 @@
 This project compares classical, penalised and the Super‑Learner classifier on multiple high‑dimensional omics datasets.
 
 
+### main branch : External MCCV + 2 Stage MCCV pipeline ###
+### nested-mccv branch: Hyper-Parameter Tuning in nested MCCV ###
+
+
+
 ```bash
 
 
